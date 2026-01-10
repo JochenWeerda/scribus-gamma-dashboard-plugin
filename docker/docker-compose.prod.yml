@@ -1,0 +1,195 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: sla-pipeline-postgres
+    environment:
+      POSTGRES_DB: sla_pipeline
+      POSTGRES_USER: ${POSTGRES_USER:-sla_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sla_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../mvp/db_mvp.sql:/docker-entrypoint-initdb.d/01_schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sla_user} -d sla_pipeline"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  # Redis (für RQ Queue)
+  redis:
+    image: redis:7-alpine
+    container_name: sla-pipeline-redis
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # MinIO (S3-kompatibler Object Store)
+  minio:
+    image: minio/minio:latest
+    container_name: sla-pipeline-minio
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ..
+      dockerfile: docker/api/Dockerfile
+    container_name: sla-pipeline-api
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sla_user}:${POSTGRES_PASSWORD:-sla_password}@postgres:5432/sla_pipeline
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET: sla-artifacts
+      SIDECAR_MCP_URL: http://sidecar-mcp:8001
+      API_KEY: ${API_KEY:-}
+      API_KEY_ENABLED: ${API_KEY_ENABLED:-true}
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  # Sidecar-MCP Service
+  sidecar-mcp:
+    build:
+      context: ..
+      dockerfile: docker/sidecar/Dockerfile
+    container_name: sla-pipeline-sidecar
+    environment:
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET: sla-artifacts
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8004:8001"
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  # Worker-Scribus (Headless)
+  worker-scribus:
+    build:
+      context: ..
+      dockerfile: docker/worker/Dockerfile
+    container_name: sla-pipeline-worker
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-sla_user}:${POSTGRES_PASSWORD:-sla_password}@postgres:5432/sla_pipeline
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET: sla-artifacts
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    volumes:
+      - ../apps/worker-scribus:/app
+      - ../packages:/packages
+      - worker_cache:/app/cache
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '4'
+          memory: 8G
+        reservations:
+          cpus: '2'
+          memory: 4G
+    # Kann skaliert werden: docker compose up --scale worker-scribus=3
+
+volumes:
+  postgres_data:
+    driver: local
+  minio_data:
+    driver: local
+  worker_cache:
+    driver: local
+
+networks:
+  default:
+    name: sla-pipeline-network
+

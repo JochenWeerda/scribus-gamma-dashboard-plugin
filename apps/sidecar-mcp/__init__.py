@@ -1,0 +1,2 @@
+"""Sidecar-MCP Service Package."""
+

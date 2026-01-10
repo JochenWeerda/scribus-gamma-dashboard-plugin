@@ -1,0 +1,119 @@
+<<<<<<< ours
+# Build artifacts
+build/
+*.vcxproj.user
+*.sln.docstates
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Compiled binaries
+*.dll
+*.lib
+*.exe
+*.obj
+*.pdb
+*.ilk
+*.exp
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+
+# Visual Studio
+.vs/
+*.aps
+*.ncb
+*.opendb
+*.opensdf
+*.sdf
+*.tlb
+*.tlh
+*.bak
+*.cache
+*.ilk
+*.log
+*.lib
+*.sbr
+*.tlb
+*.tlh
+*.tmp
+*.tmp_proj
+*.user
+*.vspscc
+*.vssscc
+.builds
+*.pidb
+*.svclog
+*.scc
+
+# Qt
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+*.moc
+
+# Temporary files
+*.tmp
+*.temp
+*~
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Documentation builds
+docs/_build/
+docs/.doctrees/
+=======
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Docker
+*.log
+
+# MinIO/Storage
+data/
+cache/
+
+# Environment
+.env
+.env.local
+
+# Cursor workspace / local-only scratch
+.cursor/.env
+.cursor/chroma_db/
+.cursor/__pycache__/
+.cursor/backend_*.log
+.cursor/gamma_scribus_pack/plugin/cpp/
+>>>>>>> theirs
+
+# Nested repos / scratch (avoid accidental submodules)
+temp_analysis/
+gamma_scribus_pack/plugin/cpp/github_version/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -1,0 +1,397 @@
+#include "gamma_dashboard_plugin.h"
+#include "gamma_dashboard_dock.h"
+
+#include <QAction>
+#include <QApplication>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QMainWindow>
+#include <QMenu>
+#include <QMenuBar>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QTimer>
+#include <QUrl>
+
+#include "pluginapi.h"
+#include "scplugin.h"
+
+// Forward declarations - vermeide vollständige Scribus-Header
+class ScribusMainWindow;
+
+namespace {
+QString cleanMenuText(const QString& text)
+{
+    QString out = text;
+    out.remove('&');
+    return out.trimmed();
+}
+}
+
+GammaDashboardPlugin::GammaDashboardPlugin()
+    : ScPlugin()
+    , m_action(nullptr)
+    , m_net(nullptr)
+    , m_pollTimer(nullptr)
+    , m_baseUrl("http://127.0.0.1:8000")
+    , m_apiKey()
+{
+    // Minimale Initialisierung - Environment-Variablen werden lazy geladen
+    // Um Abstürze beim Constructor zu vermeiden
+    QString envUrl = qEnvironmentVariable("GAMMA_BASE_URL");
+    if (!envUrl.isEmpty())
+        m_baseUrl = envUrl;
+    
+    m_apiKey = qEnvironmentVariable("GAMMA_API_KEY");
+}
+
+GammaDashboardPlugin::~GammaDashboardPlugin() = default;
+
+// initPlugin wird nur für ScPersistentPlugin aufgerufen
+// Für ScPlugin wird stattdessen addToMainWindowMenu() verwendet
+// Diese Implementierung ist für den Fall, dass wir später zu ScPersistentPlugin wechseln
+bool GammaDashboardPlugin::initPlugin()
+{
+    // Sicherheitscheck: Wenn MainWindow noch nicht verfügbar ist, später versuchen
+    QMainWindow* mw = resolveMainWindow();
+    if (!mw) {
+        // MainWindow noch nicht verfügbar - später in addToMainWindowMenu() versuchen
+        return false;
+    }
+
+    // Initialisiere Network Manager und Timer
+    if (!m_net) {
+        m_net = new QNetworkAccessManager(this);
+        connect(m_net, &QNetworkAccessManager::finished, this, &GammaDashboardPlugin::onReplyFinished);
+
+        m_pollTimer = new QTimer(this);
+        m_pollTimer->setInterval(2000);
+        connect(m_pollTimer, &QTimer::timeout, this, &GammaDashboardPlugin::pollStatus);
+    }
+
+    // Menü-Integration erfolgt in addToMainWindowMenu()
+    return true;
+}
+
+bool GammaDashboardPlugin::cleanupPlugin()
+{
+    if (m_pollTimer)
+        m_pollTimer->stop();
+    if (m_dock)
+        m_dock->deleteLater();
+    return true;
+}
+
+void GammaDashboardPlugin::languageChange()
+{
+    if (m_action)
+        m_action->setText(tr("Gamma Dashboard"));
+}
+
+QString GammaDashboardPlugin::fullTrName() const
+{
+    return tr("Gamma Dashboard");
+}
+
+void GammaDashboardPlugin::addToMainWindowMenu(ScribusMainWindow* mw)
+{
+    // Diese Methode wird für ScPlugin aufgerufen (nicht initPlugin())
+    // Hier erfolgt die Menü-Integration
+    if (!mw)
+        return;
+
+    // Initialisiere Network Manager und Timer beim ersten Aufruf
+    if (!m_net) {
+        m_net = new QNetworkAccessManager(this);
+        connect(m_net, &QNetworkAccessManager::finished, this, &GammaDashboardPlugin::onReplyFinished);
+
+        m_pollTimer = new QTimer(this);
+        m_pollTimer->setInterval(2000);
+        connect(m_pollTimer, &QTimer::timeout, this, &GammaDashboardPlugin::pollStatus);
+    }
+
+    // Füge Menü-Eintrag hinzu
+    QMainWindow* mainWin = resolveMainWindow();
+    if (!mainWin)
+        return;
+
+    QMenuBar* bar = mainWin->menuBar();
+    if (!bar)
+        return;
+
+    QMenu* menu = ensureMenu(bar, QStringList() << "Extras" << "Tools");
+    if (!menu)
+        return;
+
+    if (!m_action) {
+        m_action = new QAction(tr("Gamma Dashboard"), mainWin);
+        m_action->setCheckable(true);
+        connect(m_action, &QAction::triggered, this, &GammaDashboardPlugin::toggleDashboard);
+        menu->addAction(m_action);
+    }
+}
+
+bool GammaDashboardPlugin::newPrefsPanelWidget(QWidget* parent, Prefs_Pane*& panel)
+{
+    Q_UNUSED(parent);
+    Q_UNUSED(panel);
+    return false; // Kein Prefs-Panel
+}
+
+void GammaDashboardPlugin::setDoc(ScribusDoc* doc)
+{
+    Q_UNUSED(doc);
+    // Plugin reagiert nicht auf Dokument-Wechsel
+}
+
+void GammaDashboardPlugin::unsetDoc()
+{
+    // Plugin reagiert nicht auf Dokument-Wechsel
+}
+
+void GammaDashboardPlugin::changedDoc(ScribusDoc* doc)
+{
+    Q_UNUSED(doc);
+    // Plugin reagiert nicht auf Dokument-Änderungen
+}
+
+const ScPlugin::AboutData* GammaDashboardPlugin::getAboutData() const
+{
+    ScPlugin::AboutData* about = new ScPlugin::AboutData;
+    about->authors = "jochen.weerda@gmail.com";
+    about->shortDescription = tr("Gamma → Scribus Pipeline Dashboard");
+    about->description = tr(
+        "Gamma → Scribus Pipeline Dashboard\n\n"
+        "Importiert Gamma-Exports (PPTX + PNG), clustert Cards, "
+        "generiert Crops und erstellt Hints für die Setzerei-Engine.\n\n"
+        "Features:\n"
+        "• Native QT-GUI-Integration\n"
+        "• Pipeline-Management\n"
+        "• Live-Status-Updates\n"
+        "• Automatische Crop-Generierung"
+    );
+    about->license = "Proprietary";
+    about->copyright = "© 2025 Setzerei Engine";
+    about->releaseDate = QDateTime::fromString("2025-01-27", Qt::ISODate);
+    about->version = "1.0.0";
+    return about;
+}
+
+void GammaDashboardPlugin::deleteAboutData(const ScPlugin::AboutData* about) const
+{
+    delete about;
+}
+
+void GammaDashboardPlugin::toggleDashboard()
+{
+    QMainWindow* mw = resolveMainWindow();
+    if (!mw)
+        return;
+
+    if (!m_dock)
+    {
+        m_dock = new GammaDashboardDock(qobject_cast<QWidget*>(mw));
+        mw->addDockWidget(Qt::RightDockWidgetArea, m_dock);
+        connect(m_dock, &GammaDashboardDock::pipelineStartRequested, this, &GammaDashboardPlugin::onPipelineStart);
+        connect(m_dock, &GammaDashboardDock::pipelineStopRequested, this, &GammaDashboardPlugin::onPipelineStop);
+    }
+
+    bool show = !m_dock->isVisible();
+    m_dock->setVisible(show);
+    if (m_action)
+        m_action->setChecked(show);
+
+    if (show)
+    {
+        pollStatus();
+        if (m_pollTimer)
+            m_pollTimer->start();
+    }
+    else
+    {
+        if (m_pollTimer)
+            m_pollTimer->stop();
+    }
+}
+
+void GammaDashboardPlugin::pollStatus()
+{
+    sendGet("/api/v1/status", "status");
+}
+
+void GammaDashboardPlugin::onPipelineStart()
+{
+    // TODO: Pipeline-Start-Logik
+    // Zunächst nur Log
+    if (m_dock)
+        m_dock->appendLog("Pipeline start requested (implementation pending)");
+}
+
+void GammaDashboardPlugin::onPipelineStop()
+{
+    // TODO: Pipeline-Stop-Logik
+    if (m_dock)
+        m_dock->appendLog("Pipeline stop requested (implementation pending)");
+}
+
+void GammaDashboardPlugin::onReplyFinished(QNetworkReply* reply)
+{
+    if (!reply)
+        return;
+
+    const QString tag = m_replyTags.take(reply);
+    const QByteArray data = reply->readAll();
+
+    if (reply->error() != QNetworkReply::NoError)
+    {
+        if (m_dock)
+        {
+            m_dock->setStatus(false, -1);
+            m_dock->appendLog(QString("%1 failed: %2").arg(tag, reply->errorString()));
+        }
+        reply->deleteLater();
+        return;
+    }
+
+    QJsonParseError err;
+    QJsonDocument doc = QJsonDocument::fromJson(data, &err);
+    if (err.error != QJsonParseError::NoError)
+    {
+        if (m_dock)
+            m_dock->appendLog(QString("%1: invalid JSON").arg(tag));
+        reply->deleteLater();
+        return;
+    }
+
+    if (!doc.isObject())
+    {
+        reply->deleteLater();
+        return;
+    }
+
+    const QJsonObject obj = doc.object();
+    if (tag == "status")
+        handleStatus(obj);
+    else if (tag == "pipeline")
+        handlePipelineStatus(obj);
+    else
+    {
+        if (m_dock)
+            m_dock->appendLog(QString("%1: OK").arg(tag));
+    }
+
+    reply->deleteLater();
+}
+
+QMainWindow* GammaDashboardPlugin::resolveMainWindow() const
+{
+    // Versuche ScCore zu verwenden (wenn verfügbar)
+    // Forward declaration verhindert direkten Zugriff, daher verwenden wir nur QApplication
+    QWidget* active = QApplication::activeWindow();
+    if (active)
+    {
+        QMainWindow* mw = qobject_cast<QMainWindow*>(active);
+        if (mw)
+            return mw;
+    }
+
+    // Durchsuche alle Top-Level-Widgets
+    const auto top = QApplication::topLevelWidgets();
+    for (QWidget* w : top)
+    {
+        QMainWindow* mw = qobject_cast<QMainWindow*>(w);
+        if (mw)
+            return mw;
+    }
+    return nullptr;
+}
+
+QMenu* GammaDashboardPlugin::ensureMenu(QMenuBar* bar, const QStringList& names) const
+{
+    if (!bar)
+        return nullptr;
+    for (QAction* act : bar->actions())
+    {
+        QMenu* menu = act->menu();
+        if (!menu)
+            continue;
+        const QString label = cleanMenuText(menu->title());
+        for (const QString& name : names)
+        {
+            if (label.compare(name, Qt::CaseInsensitive) == 0)
+                return menu;
+        }
+    }
+    return bar->addMenu(names.value(0, "Extras"));
+}
+
+QNetworkReply* GammaDashboardPlugin::sendGet(const QString& path, const QString& tag)
+{
+    if (!m_net)
+        return nullptr;
+    QUrl url(m_baseUrl + path);
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    if (!m_apiKey.isEmpty())
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + m_apiKey.toUtf8());
+    QNetworkReply* reply = m_net->get(req);
+    if (reply)
+        m_replyTags.insert(reply, tag);
+    return reply;
+}
+
+QNetworkReply* GammaDashboardPlugin::sendPost(const QString& path, const QByteArray& payload, const QString& tag)
+{
+    if (!m_net)
+        return nullptr;
+    QUrl url(m_baseUrl + path);
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+    if (!m_apiKey.isEmpty())
+        req.setRawHeader("Authorization", QByteArray("Bearer ") + m_apiKey.toUtf8());
+    QNetworkReply* reply = m_net->post(req, payload);
+    if (reply)
+        m_replyTags.insert(reply, tag);
+    return reply;
+}
+
+void GammaDashboardPlugin::handleStatus(const QJsonObject& obj)
+{
+    const bool connected = obj.value("connected").toBool(false);
+    const int latency = obj.value("latency_ms").toInt(-1);
+    if (m_dock)
+    {
+        m_dock->setStatus(connected, latency);
+        m_dock->appendLog(QString("status: %1").arg(connected ? "connected" : "disconnected"));
+    }
+}
+
+void GammaDashboardPlugin::handlePipelineStatus(const QJsonObject& obj)
+{
+    // TODO: Pipeline-Status verarbeiten
+    if (m_dock)
+        m_dock->appendLog("Pipeline status updated");
+}
+
+// Plugin-Export-Funktionen (von Scribus erwartet)
+extern "C" PLUGIN_API int gamma_dashboard_getPluginAPIVersion()
+{
+    return PLUGIN_API_VERSION;
+}
+
+extern "C" PLUGIN_API ScPlugin* gamma_dashboard_getPlugin()
+{
+    try {
+        return new GammaDashboardPlugin();
+    } catch (...) {
+        // Catch any exceptions during instantiation
+        return nullptr;
+    }
+}
+
+extern "C" PLUGIN_API void gamma_dashboard_freePlugin(ScPlugin* plugin)
+{
+    delete plugin;
+}

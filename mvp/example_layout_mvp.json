@@ -1,0 +1,98 @@
+{
+  "version": "1.0.0",
+  "document": {
+    "width": 2480,
+    "height": 3508,
+    "dpi": 300
+  },
+  "pages": [
+    {
+      "pageNumber": 1,
+      "masterPage": null,
+      "objects": [
+        {
+          "id": "bg_rect_001",
+          "type": "rectangle",
+          "bbox": {
+            "x": 0,
+            "y": 0,
+            "w": 2480,
+            "h": 3508
+          },
+          "layer": "Background",
+          "zOrder": 0,
+          "visible": true,
+          "locked": false,
+          "fillColor": "#F5F5F5",
+          "fillOpacity": 1.0,
+          "strokeColor": "#000000",
+          "strokeWidth": 0,
+          "strokeOpacity": 0,
+          "cornerRadius": 0
+        },
+        {
+          "id": "hero_image_001",
+          "type": "image",
+          "bbox": {
+            "x": 124,
+            "y": 124,
+            "w": 2232,
+            "h": 1254
+          },
+          "layer": "Images",
+          "zOrder": 10,
+          "visible": true,
+          "locked": false,
+          "imageUrl": "assets/images/heroes/hero_001.jpg",
+          "scaleToFrame": true,
+          "maintainAspectRatio": true
+        },
+        {
+          "id": "headline_001",
+          "type": "text",
+          "bbox": {
+            "x": 124,
+            "y": 1502,
+            "w": 2232,
+            "h": 140
+          },
+          "layer": "Text",
+          "zOrder": 20,
+          "visible": true,
+          "locked": false,
+          "content": "Die verborgene Uhr Gottes",
+          "fontFamily": "Minion Pro",
+          "fontSize": 48,
+          "fontWeight": "bold",
+          "color": "#1A1A1A",
+          "align": "left",
+          "columns": 1,
+          "columnGap": 0
+        },
+        {
+          "id": "subtitle_001",
+          "type": "text",
+          "bbox": {
+            "x": 124,
+            "y": 1666,
+            "w": 1488,
+            "h": 84
+          },
+          "layer": "Text",
+          "zOrder": 21,
+          "visible": true,
+          "locked": false,
+          "content": "Ein geheimer Zeitcode durchzieht die Schöpfung",
+          "fontFamily": "Minion Pro",
+          "fontSize": 24,
+          "fontWeight": "normal",
+          "color": "#4A4A4A",
+          "align": "left",
+          "columns": 1,
+          "columnGap": 0
+        }
+      ]
+    }
+  ]
+}
+

@@ -1,0 +1,9 @@
+{
+  "Name": "Gamma Dashboard",
+  "Version": "1.0.0",
+  "Description": "Gamma → Scribus Pipeline Dashboard with dockable panel.",
+  "Author": "jochen.weerda@gmail.com",
+  "License": "Proprietary",
+  "Type": "UI"
+}
+

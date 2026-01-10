@@ -1,0 +1,90 @@
+#ifndef GAMMA_DASHBOARD_PLUGIN_H
+#define GAMMA_DASHBOARD_PLUGIN_H
+
+#include <QHash>
+#include <QPointer>
+#include <QString>
+
+#include "pluginapi.h"
+#include "scplugin.h"
+
+class QAction;
+class QMainWindow;
+class QMenu;
+class QMenuBar;
+class QNetworkAccessManager;
+class QNetworkReply;
+class QJsonObject;
+class QTimer;
+class ScribusMainWindow;
+
+class GammaDashboardDock;
+
+/**
+ * @brief Gamma Dashboard Plugin für Scribus
+ * 
+ * Native C++ Plugin mit Dock Widget Integration.
+ * Inspiriert von MCP Dashboard Plugin Pattern.
+ */
+class GammaDashboardPlugin : public ScPlugin
+{
+    Q_OBJECT
+
+public:
+    GammaDashboardPlugin();
+    ~GammaDashboardPlugin() override;
+
+    // Plugin-Lebenszyklus-Methoden (werden von Scribus zur Laufzeit aufgerufen)
+    // initPlugin() ist nur in ScPersistentPlugin virtual, nicht in ScPlugin
+    // Daher keine override-Spezifikation
+    bool initPlugin();
+    bool cleanupPlugin();
+    
+    void languageChange() override;
+
+    QString fullTrName() const override;
+    void addToMainWindowMenu(ScribusMainWindow *) override;
+
+    // Virtuelle Methoden aus ScPlugin (mit Standard-Implementierungen)
+    bool newPrefsPanelWidget(QWidget* parent, Prefs_Pane*& panel) override;
+    void setDoc(ScribusDoc* doc) override;
+    void unsetDoc() override;
+    void changedDoc(ScribusDoc* doc) override;
+
+    // Zusätzliche Plugin-Info-Methoden
+    const ScPlugin::AboutData* getAboutData() const override;
+    void deleteAboutData(const ScPlugin::AboutData* about) const override;
+
+private slots:
+    void toggleDashboard();
+    void pollStatus();
+    void onPipelineStart();
+    void onPipelineStop();
+    void onReplyFinished(QNetworkReply* reply);
+
+private:
+    QMainWindow* resolveMainWindow() const;
+    QMenu* ensureMenu(QMenuBar* bar, const QStringList& names) const;
+
+    QNetworkReply* sendGet(const QString& path, const QString& tag);
+    QNetworkReply* sendPost(const QString& path, const QByteArray& payload, const QString& tag);
+
+    void handleStatus(const QJsonObject& obj);
+    void handlePipelineStatus(const QJsonObject& obj);
+
+    QPointer<GammaDashboardDock> m_dock;
+    QAction* m_action;
+    QNetworkAccessManager* m_net;
+    QTimer* m_pollTimer;
+    QHash<QNetworkReply*, QString> m_replyTags;
+    QString m_baseUrl;
+    QString m_apiKey;
+};
+
+// Plugin-Export-Funktionen (von Scribus erwartet)
+extern "C" PLUGIN_API int gamma_dashboard_getPluginAPIVersion();
+extern "C" PLUGIN_API ScPlugin* gamma_dashboard_getPlugin();
+extern "C" PLUGIN_API void gamma_dashboard_freePlugin(ScPlugin* plugin);
+
+#endif // GAMMA_DASHBOARD_PLUGIN_H
+

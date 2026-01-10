@@ -1,0 +1,282 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Layout MVP Schema",
+  "description": "JSON Schema für Scribus-Layout-Definitionen (MVP): Text/Bild/Rechteck, Layer, Z-Order, Boxen in px",
+  "type": "object",
+  "required": ["pages"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Schema-Version",
+      "default": "1.0.0"
+    },
+    "document": {
+      "type": "object",
+      "properties": {
+        "width": {
+          "type": "number",
+          "description": "Seitenbreite in px",
+          "minimum": 1
+        },
+        "height": {
+          "type": "number",
+          "description": "Seitenhöhe in px",
+          "minimum": 1
+        },
+        "dpi": {
+          "type": "number",
+          "description": "Auflösung (DPI)",
+          "default": 72
+        }
+      }
+    },
+    "pages": {
+      "type": "array",
+      "description": "Array von Seiten",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["pageNumber", "objects"],
+        "properties": {
+          "pageNumber": {
+            "type": "integer",
+            "description": "Seitennummer (1-basiert)",
+            "minimum": 1
+          },
+          "masterPage": {
+            "type": "string",
+            "description": "Optional: Name der Master Page"
+          },
+          "objects": {
+            "type": "array",
+            "description": "Array von Layout-Objekten auf dieser Seite",
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/definitions/TextObject"
+                },
+                {
+                  "$ref": "#/definitions/ImageObject"
+                },
+                {
+                  "$ref": "#/definitions/RectangleObject"
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "BaseObject": {
+      "type": "object",
+      "required": ["id", "type", "bbox", "layer"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Eindeutige Objekt-ID"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["text", "image", "rectangle"],
+          "description": "Objekttyp"
+        },
+        "bbox": {
+          "$ref": "#/definitions/Box"
+        },
+        "layer": {
+          "type": "string",
+          "description": "Layer-Name (z.B. 'Background', 'Images', 'Text', 'Overlay')",
+          "default": "Text"
+        },
+        "zOrder": {
+          "type": "integer",
+          "description": "Z-Order (Höhere Zahl = weiter oben). Optional, wird automatisch aus Layer abgeleitet wenn nicht gesetzt.",
+          "minimum": 0
+        },
+        "visible": {
+          "type": "boolean",
+          "description": "Sichtbarkeit",
+          "default": true
+        },
+        "locked": {
+          "type": "boolean",
+          "description": "Objekt gesperrt",
+          "default": false
+        }
+      }
+    },
+    "Box": {
+      "type": "object",
+      "required": ["x", "y", "w", "h"],
+      "description": "Bounding Box in px (Koordinaten relativ zur Seite)",
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "X-Position in px (links = 0)",
+          "minimum": 0
+        },
+        "y": {
+          "type": "number",
+          "description": "Y-Position in px (oben = 0)",
+          "minimum": 0
+        },
+        "w": {
+          "type": "number",
+          "description": "Breite in px",
+          "minimum": 1
+        },
+        "h": {
+          "type": "number",
+          "description": "Höhe in px",
+          "minimum": 1
+        }
+      }
+    },
+    "TextObject": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/BaseObject"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": {
+              "const": "text"
+            },
+            "content": {
+              "type": "string",
+              "description": "Text-Inhalt (kann leer sein für Platzhalter)"
+            },
+            "fontFamily": {
+              "type": "string",
+              "description": "Schriftfamilie",
+              "default": "Arial"
+            },
+            "fontSize": {
+              "type": "number",
+              "description": "Schriftgröße in pt",
+              "minimum": 1,
+              "default": 12
+            },
+            "fontWeight": {
+              "type": "string",
+              "enum": ["normal", "bold"],
+              "default": "normal"
+            },
+            "color": {
+              "type": "string",
+              "description": "Textfarbe (Hex oder CSS-Farbname)",
+              "default": "#000000"
+            },
+            "align": {
+              "type": "string",
+              "enum": ["left", "center", "right", "justify"],
+              "default": "left"
+            },
+            "columns": {
+              "type": "integer",
+              "description": "Anzahl Spalten (1 = kein Spaltensatz)",
+              "minimum": 1,
+              "default": 1
+            },
+            "columnGap": {
+              "type": "number",
+              "description": "Spaltenabstand in px",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        }
+      ]
+    },
+    "ImageObject": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/BaseObject"
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": {
+              "const": "image"
+            },
+            "imageUrl": {
+              "type": "string",
+              "description": "URL oder Pfad zum Bild (relativ oder absolut)"
+            },
+            "imageData": {
+              "type": "string",
+              "description": "Base64-encodiertes Bild (alternative zu imageUrl)"
+            },
+            "scaleToFrame": {
+              "type": "boolean",
+              "description": "Bild auf Frame-Größe skalieren",
+              "default": true
+            },
+            "maintainAspectRatio": {
+              "type": "boolean",
+              "description": "Seitenverhältnis beibehalten",
+              "default": true
+            }
+          }
+        }
+      ]
+    },
+    "RectangleObject": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/BaseObject"
+        },
+        {
+          "type": "object",
+          "required": ["type"],
+          "properties": {
+            "type": {
+              "const": "rectangle"
+            },
+            "fillColor": {
+              "type": "string",
+              "description": "Füllfarbe (Hex oder CSS-Farbname)",
+              "default": "#FFFFFF"
+            },
+            "fillOpacity": {
+              "type": "number",
+              "description": "Füll-Opazität (0.0 = transparent, 1.0 = opak)",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 1.0
+            },
+            "strokeColor": {
+              "type": "string",
+              "description": "Strichfarbe (Hex oder CSS-Farbname)",
+              "default": "#000000"
+            },
+            "strokeWidth": {
+              "type": "number",
+              "description": "Strichbreite in px",
+              "minimum": 0,
+              "default": 0
+            },
+            "strokeOpacity": {
+              "type": "number",
+              "description": "Strich-Opazität (0.0 = transparent, 1.0 = opak)",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 1.0
+            },
+            "cornerRadius": {
+              "type": "number",
+              "description": "Eckradius in px (0 = scharfe Ecken)",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        }
+      ]
+    }
+  }
+}
+

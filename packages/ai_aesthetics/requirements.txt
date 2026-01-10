@@ -1,0 +1,6 @@
+# AI-Enhanced Aesthetics Requirements
+# KI-Provider (optional)
+openai>=1.0.0  # Für OpenAI Vision API und GPT-4
+google-cloud-vision>=3.0.0  # Für Google Cloud Vision API
+# Pillow>=10.0.0  # Optional: Für lokale Bildanalyse
+

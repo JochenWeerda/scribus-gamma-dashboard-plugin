@@ -29,6 +29,11 @@ class WorkflowConfig:
     quality_on_variants: bool = True
     quality_out: Path = Path("media_pool/quality")
     quality_checks: Tuple[str, ...] = ("preflight", "amazon")
+    render: bool = False
+    render_on_variants: bool = True
+    render_out: Path = Path("media_pool/render")
+    render_pdf: bool = True
+    render_png: bool = True
     force: bool = False
     retry_max: int = 1
 
@@ -270,6 +275,7 @@ class WorkflowOrchestrator:
                     layout_paths=quality_paths,
                     out_dir=self.config.quality_out,
                     checks=list(self.config.quality_checks),
+                    project_init=self.config.project_init,
                 )
 
             def _quality_success(qres):
@@ -278,6 +284,63 @@ class WorkflowOrchestrator:
                 state["quality"] = qres
 
             self._run_step(state=state, step_id="quality_check", input_hash=quality_input_hash, fn=_do_quality, on_success=_quality_success)
+            self.resume.save(state)
+
+        if self.config.render:
+            # Step 5: render (SLA + PDF/PNG)
+            render_paths: list[Path] = []
+            if self.config.generate_variants and self.config.render_on_variants:
+                vres = state.get("variants") or {}
+                outs = vres.get("outputs") or []
+                for o in outs:
+                    try:
+                        op = o.get("out")
+                        if op:
+                            render_paths.append(Path(op))
+                    except Exception:
+                        continue
+            else:
+                res = convert_result_holder.get("res")
+                if res is None:
+                    prev = self.resume.get_step(state, "convert_manifest")
+                    outputs = prev.get("outputs") or state.get("converted", {}).get("outputs") or []
+                    render_paths = [Path(p) for p in outputs]
+                else:
+                    render_paths = list(res.outputs)
+
+            r_hashes = []
+            for p in render_paths:
+                try:
+                    r_hashes.append({"path": str(p), "hash": hash_file(Path(p))})
+                except Exception:
+                    r_hashes.append({"path": str(p), "hash": None})
+
+            render_input_hash = hash_inputs(
+                {
+                    "step": "render",
+                    "layouts": r_hashes,
+                    "render_out": str(self.config.render_out),
+                    "render_pdf": bool(self.config.render_pdf),
+                    "render_png": bool(self.config.render_png),
+                    "project_init_hash": project_init_hash,
+                }
+            )
+
+            def _do_render():
+                return self.exec.render(
+                    layout_paths=render_paths,
+                    out_dir=self.config.render_out,
+                    project_init=self.config.project_init,
+                    render_pdf=bool(self.config.render_pdf),
+                    render_png=bool(self.config.render_png),
+                )
+
+            def _render_success(rres):
+                _render_success.outputs = [o.get("path") for o in (rres.get("outputs") or []) if o.get("path")]  # type: ignore[attr-defined]
+                _render_success.summary = {"outputs": len(rres.get("outputs") or []), "errors": len(rres.get("errors") or [])}  # type: ignore[attr-defined]
+                state["render"] = rres
+
+            self._run_step(state=state, step_id="render", input_hash=render_input_hash, fn=_do_render, on_success=_render_success)
             self.resume.save(state)
 
         self.tracker.emit("workflow.done", state=state)

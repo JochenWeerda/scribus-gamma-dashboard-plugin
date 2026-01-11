@@ -5,6 +5,7 @@ import logging
 import traceback
 from dataclasses import dataclass, field
 import json
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -15,6 +16,100 @@ from .resume_manager import ResumeManager, hash_inputs
 @dataclass
 class StepExecutor:
     tracker: ProgressTracker = field(default_factory=ProgressTracker)
+
+    def render(
+        self,
+        *,
+        layout_paths: List[Path],
+        out_dir: Path,
+        project_init: Optional[Path] = None,
+        render_pdf: bool = True,
+        render_png: bool = True,
+        report_name: str = "render_report.json",
+    ) -> Dict[str, Any]:
+        """
+        Render step (MVP): Layout JSON -> SLA + placeholder PDF/PNG.
+
+        This makes the render/export step explicit in the workflow graph.
+        Production Scribus export can later replace the placeholder generator.
+        """
+
+        from packages.sla_compiler import compile_layout_to_sla
+
+        init: Dict[str, Any] = {}
+        if project_init and Path(project_init).exists():
+            try:
+                init = json.loads(Path(project_init).read_text(encoding="utf-8"))
+            except Exception:
+                init = {}
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        sla_dir = out_dir / "sla"
+        pdf_dir = out_dir / "pdf"
+        png_dir = out_dir / "png"
+        sla_dir.mkdir(parents=True, exist_ok=True)
+        if render_pdf:
+            pdf_dir.mkdir(parents=True, exist_ok=True)
+        if render_png:
+            png_dir.mkdir(parents=True, exist_ok=True)
+
+        report: Dict[str, Any] = {"outputs": [], "errors": []}
+        self.tracker.emit("render.start", inputs=len(layout_paths), out_dir=str(out_dir))
+
+        for lp in layout_paths:
+            try:
+                layout = json.loads(Path(lp).read_text(encoding="utf-8"))
+            except Exception as exc:
+                report["errors"].append({"path": str(lp), "error": f"failed to read json: {exc}"})
+                continue
+
+            base_name = Path(lp).stem
+            # If this is our "chapter_XX_name.layout.json" format, keep that stable.
+            safe_name = re.sub(r"[^A-Za-z0-9_.\\-]+", "_", base_name).strip("_") or "layout"
+
+            try:
+                sla_bytes = compile_layout_to_sla(layout)
+                sla_path = sla_dir / f"{safe_name}.sla"
+                sla_path.write_bytes(sla_bytes)
+            except Exception as exc:
+                report["errors"].append({"path": str(lp), "error": f"failed to compile sla: {exc}"})
+                continue
+
+            pdf_path = None
+            if render_pdf:
+                pdf_path = pdf_dir / f"{safe_name}.pdf"
+                try:
+                    pdf_path.write_bytes(_minimal_pdf_bytes(f"Placeholder PDF for {safe_name}"))
+                except Exception as exc:
+                    report["errors"].append({"path": str(lp), "error": f"failed to write pdf: {exc}"})
+                    pdf_path = None
+
+            png_path = None
+            if render_png:
+                png_path = png_dir / f"{safe_name}_p0001.png"
+                try:
+                    png_path.write_bytes(_minimal_png_1x1())
+                except Exception as exc:
+                    report["errors"].append({"path": str(lp), "error": f"failed to write png: {exc}"})
+                    png_path = None
+
+            report["outputs"].append(
+                {
+                    "input": str(lp),
+                    "sla": str(sla_path),
+                    "pdf": str(pdf_path) if pdf_path else None,
+                    "png": str(png_path) if png_path else None,
+                    "path": str(sla_path),
+                    "render_mode": "placeholder",
+                }
+            )
+
+        report_path = out_dir / report_name
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        report["report_path"] = str(report_path)
+
+        self.tracker.emit("render.done", outputs=len(report["outputs"]), errors=len(report["errors"]), report=str(report_path))
+        return report
 
     def convert_manifest(self, *, manifest_path: Path, pptx_root: Path, out_dir: Path, project_init: Optional[Path] = None):
         from packages.pptx_parser.manifest_converter import convert_manifest_to_layout_jsons
@@ -158,6 +253,7 @@ class StepExecutor:
         layout_paths: List[Path],
         out_dir: Path,
         checks: Optional[List[str]] = None,
+        project_init: Optional[Path] = None,
         report_name: str = "quality_report.json",
     ) -> Dict[str, Any]:
         """
@@ -168,10 +264,17 @@ class StepExecutor:
         - amazon: KDP constraint validation
         """
 
-        from packages.quality_check import check_amazon_constraints, run_preflight
+        from packages.quality_check import check_amazon_constraints, run_preflight, evaluate_quality_gate, summarize_quality_gate
 
         checks = checks or ["preflight", "amazon"]
         out_dir.mkdir(parents=True, exist_ok=True)
+
+        init: Dict[str, Any] = {}
+        if project_init and Path(project_init).exists():
+            try:
+                init = json.loads(Path(project_init).read_text(encoding="utf-8"))
+            except Exception:
+                init = {}
 
         report: Dict[str, Any] = {"outputs": [], "errors": [], "checks": list(checks)}
         self.tracker.emit("quality.start", inputs=len(layout_paths), checks=checks)
@@ -193,6 +296,10 @@ class StepExecutor:
                     ok, errs = check_amazon_constraints(layout)
                     entry["amazon_valid"] = bool(ok)
                     entry["amazon_errors"] = list(errs[:50])
+
+                # Quality gate (fail/warn policy), always computed.
+                gate_results = evaluate_quality_gate(layout, project_init=init)
+                entry["quality_gate"] = summarize_quality_gate(gate_results)
             except Exception as exc:
                 report["errors"].append({"path": str(p), "error": str(exc)})
                 continue
@@ -462,3 +569,48 @@ class IdempotentStepExecutor:
             self.resume_manager.save(state)
             self.tracker.emit("step.failed", step_id=step_id, error=str(e))
             raise
+
+
+def _minimal_png_1x1() -> bytes:
+    # 1x1 transparent PNG
+    return (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01"
+        b"\x00\x00\x05\x00\x01\r\n-\xdb\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+
+
+def _minimal_pdf_bytes(message: str) -> bytes:
+    """
+    Minimal single-page PDF without external deps (good enough for pipeline wiring/tests).
+    """
+
+    msg = (message or "PDF").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")[:200]
+
+    # Build objects
+    parts: List[bytes] = []
+    parts.append(b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n")
+
+    offsets = []
+
+    def add_obj(obj_no: int, body: bytes) -> None:
+        offsets.append(sum(len(p) for p in parts))
+        parts.append(f"{obj_no} 0 obj\n".encode("ascii") + body + b"\nendobj\n")
+
+    add_obj(1, b"<< /Type /Catalog /Pages 2 0 R >>")
+    add_obj(2, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    add_obj(3, b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>")
+
+    stream = f"BT /F1 18 Tf 72 770 Td ({msg}) Tj ET\n".encode("utf-8")
+    add_obj(4, b"<< /Length " + str(len(stream)).encode("ascii") + b" >>\nstream\n" + stream + b"endstream")
+    add_obj(5, b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
+
+    # Xref
+    xref_start = sum(len(p) for p in parts)
+    parts.append(b"xref\n0 6\n0000000000 65535 f \n")
+    for off in offsets:
+        parts.append(f"{off:010d} 00000 n \n".encode("ascii"))
+    parts.append(b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n")
+    parts.append(f"{xref_start}\n".encode("ascii"))
+    parts.append(b"%%EOF\n")
+    return b"".join(parts)

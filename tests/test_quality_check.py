@@ -36,6 +36,6 @@ def test_quality_check_writes_report(tmp_path: Path):
 
     assert rep["errors"] == []
     assert len(rep["outputs"]) == 1
+    assert "quality_gate" in rep["outputs"][0]
     report_path = Path(rep["report_path"])
     assert report_path.exists()
-

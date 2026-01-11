@@ -426,6 +426,7 @@ def process_workflow_job(job_id: str):
             variants_out = out_root / "layout_json_variants"
             gamma_crops_out = out_root / "gamma_crops"
             quality_out = out_root / "quality"
+            render_out = out_root / "render"
             resume_path = out_root / "workflow_state.json"
 
             cfg = WorkflowConfig(
@@ -446,6 +447,11 @@ def process_workflow_job(job_id: str):
                 quality_on_variants=bool(job_metadata.get("quality_on_variants", True)),
                 quality_out=quality_out,
                 quality_checks=tuple(job_metadata.get("quality_checks") or ("preflight", "amazon")),
+                render=bool(job_metadata.get("render", False)),
+                render_on_variants=bool(job_metadata.get("render_on_variants", True)),
+                render_out=render_out,
+                render_pdf=bool(job_metadata.get("render_pdf", True)),
+                render_png=bool(job_metadata.get("render_png", True)),
                 force=bool(job_metadata.get("force", False)),
                 retry_max=1,
             )
@@ -582,6 +588,58 @@ def process_workflow_job(job_id: str):
                         metadata={"job_id": job_id, "kind": "quality_report"},
                     )
                     published["quality"] = str(aid)
+
+                # Upload render outputs (PDF/PNG placeholders or real exports)
+                published["renders"] = []
+                max_png = int(os.environ.get("MAX_RENDER_PREVIEW_UPLOADS", "10"))
+
+                for rp in render_out.rglob("*.pdf"):
+                    data = rp.read_bytes()
+                    uri, fname, fsize = _upload_artifact_with_retry(
+                        artifact_store,
+                        data,
+                        ArtifactType.PDF,
+                        file_name=f"workflow_render_{job_id}_{rp.name}",
+                        mime_type="application/pdf",
+                    )
+                    checksum = artifact_store.compute_checksum(data)
+                    aid = _insert_artifact_row(
+                        db,
+                        artifact_type=ArtifactType.PDF,
+                        storage_uri=uri,
+                        file_name=fname,
+                        file_size=fsize,
+                        mime_type="application/pdf",
+                        checksum_md5=checksum,
+                        metadata={"job_id": job_id, "kind": "render_pdf"},
+                    )
+                    published["renders"].append(str(aid))
+
+                png_uploaded = 0
+                for rp in render_out.rglob("*.png"):
+                    if png_uploaded >= max_png:
+                        break
+                    data = rp.read_bytes()
+                    uri, fname, fsize = _upload_artifact_with_retry(
+                        artifact_store,
+                        data,
+                        ArtifactType.PNG,
+                        file_name=f"workflow_render_{job_id}_{rp.name}",
+                        mime_type="image/png",
+                    )
+                    checksum = artifact_store.compute_checksum(data)
+                    aid = _insert_artifact_row(
+                        db,
+                        artifact_type=ArtifactType.PNG,
+                        storage_uri=uri,
+                        file_name=fname,
+                        file_size=fsize,
+                        mime_type="image/png",
+                        checksum_md5=checksum,
+                        metadata={"job_id": job_id, "kind": "render_png"},
+                    )
+                    published["renders"].append(str(aid))
+                    png_uploaded += 1
 
             # Always upload a single bundle of the output dir
             out_zip = tmp_path / f"workflow_{job_id}.zip"

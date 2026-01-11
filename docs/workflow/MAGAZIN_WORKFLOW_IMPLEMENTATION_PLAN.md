@@ -40,6 +40,13 @@ Empfohlene Defaults:
 - `gamma_sync=false` (nur aktivieren wenn Gamma-Exports vorhanden sind)
 - `gamma_crop_kinds=["infobox"]` (konservativ; Erweiterung nur bei Bedarf)
 - `gamma_attach_to_variants=false` (nur sinnvoll, wenn Variants genutzt werden)
+- `render=false` (Render ist teuer; bewusst opt-in)
+
+Render-Flags:
+- `render=true|false`
+- `render_on_variants=true|false`
+- `render_pdf=true|false`
+- `render_png=true|false`
 
 ## Steps (Pipeline)
 Der Orchestrator führt Schritte sequentiell aus und schreibt einen Resume-State (`workflow_state.json`).
@@ -60,4 +67,3 @@ Typischer Ablauf:
 Die „teuren“ oder potenziell invasive Schritte sind strikt Flag-gesteuert:
 - Gamma-Crops: nur bei `gamma_sync=true`
 - Attach zu Varianten: nur bei `gamma_attach_to_variants=true` (und nur wenn `gamma_sync=true`)
-

@@ -1,0 +1,71 @@
+{
+  "project_name": "Magazin-Projekt",
+  "version": "1.0.0",
+  "format": "A4",
+  "variants": ["color", "grayscale"],
+  "directories": {
+    "pptx_dir": "./media_pool/pptx",
+    "png_dir": "./media_pool/png",
+    "output_dir": "./output",
+    "config_dir": "./config"
+  },
+  "acts": [
+    {"act": 1, "title": "DER URSPRUNG", "chapters": [0, 3]},
+    {"act": 2, "title": "DAS DRAMA", "chapters": [4, 6]},
+    {"act": 3, "title": "DIE BESCHLEUNIGUNG", "chapters": [7, 10]},
+    {"act": 4, "title": "DER SCHLEIER", "chapters": [11, 11]},
+    {"act": 5, "title": "DIE ANKUNFT", "chapters": [12, 13]}
+  ],
+  "chapter_map": [
+    {"chapter": 0, "pptx": "Gottes-erste-Uhr-die-Schopfung"},
+    {"chapter": 1, "pptx": "Die-verborgene-Uhr-Gottes Das wort Gottes im Exil"},
+    {"chapter": 2, "pptx": "Daniels-Gebet-shuv-und-die-70-Jahrwochen"},
+    {"chapter": 3, "pptx": "Antiochus-Makkabaer-und-der-Greuel"},
+    {"chapter": 4, "pptx": "Entzeit-rede-der-Greuel-Jerusalem-und-wir"},
+    {"chapter": 5, "pptx": "Mensch-der-Gesetzlosigkeit-das-Tier-und-der-Endzeit-Greuel"},
+    {"chapter": 6, "pptx": "Die-verborgene-Uhr-Gottes-Das-Drama-der-Zeit"},
+    {"chapter": 7, "pptx": "Die-verborgene-Uhr-Gottes-Daniel-Jerusalem-und-das-Drama-der-Zeit"},
+    {"chapter": 8, "pptx": "Gottes-dreifache-Heilsgeschichte"},
+    {"chapter": 9, "pptx": "Die-verborgene-Uhr-Gottes"},
+    {"chapter": 10, "pptx": "Die-letzte-Beschleunigung"},
+    {"chapter": 11, "pptx": "Wenn-der-Schleier-fallt"},
+    {"chapter": 12, "pptx": "Wenn-die-Uhr-schlagt"},
+    {"chapter": 13, "pptx": "Kapitel-13-Die-letzte-Beschleunigung"}
+  ],
+  "print": {
+    "bleed_mm": 3.0
+  },
+  "amazon": {
+    "enabled": false,
+    "safety_margin_mm": 0.0
+  },
+  "layout": {
+    "grid": {"cols": 6},
+    "layers": ["BACKGROUND", "IMAGES", "TEXT", "INFOBOX", "QUOTES", "OVERLAY"]
+  },
+  "typography": {
+    "fonts": [
+      {"family": "Inter", "files": ["Inter-Regular.ttf", "Inter-Bold.ttf"]}
+    ]
+  },
+  "figma": {
+    "enabled": false,
+    "mode": 1,
+    "file_key": "",
+    "team_id": "",
+    "project_id": "",
+    "frames": [],
+    "ai": {
+      "rag_enabled": true,
+      "top_k": 5
+    }
+  },
+  "design_decisions": {
+    "akt_colors": "auto",
+    "layout_density": "standard",
+    "typography": "standard",
+    "sidebar_detection": "auto",
+    "infographic_handling": "standard"
+  }
+}
+

@@ -12,6 +12,7 @@ import os
 from .client import FigmaClient
 from .converter import FrameToLayoutConverter, LayoutToFrameConverter
 from .asset_downloader import FigmaAssetDownloader
+from .ai_brief import FigmaAIBriefConfig, build_figma_ai_brief
 
 # Globale Instanzen für AutoIndexer (wird in API Gateway initialisiert)
 _auto_indexer = None
@@ -71,6 +72,15 @@ class ExportFrameRequest(BaseModel):
     frame_id: Optional[str] = None
     frame_name: str = "Exported Page"
     layout_json: Dict
+
+
+class AIBriefRequest(BaseModel):
+    """Mode 1: build a prompt pack for Figma AI (no direct AI API call)."""
+
+    layout_json: Dict
+    top_k: int = 5
+    rag_enabled: bool = False
+    project_init: Optional[Dict] = None
 
 
 # Router
@@ -305,4 +315,17 @@ async def figma_health():
             "asset_downloader": _asset_downloader is not None,
         }
     }
+
+
+@router.post("/ai/brief")
+async def figma_ai_brief(request: AIBriefRequest):
+    """
+    Mode 1: Generates a structured design brief + prompt text for Figma AI.
+
+    Note: Figma AI does not expose a public API. This endpoint creates the "prompt pack" that can be pasted
+    into Figma AI (or used by a later automation agent).
+    """
+
+    cfg = FigmaAIBriefConfig(top_k=int(request.top_k), rag_enabled=bool(request.rag_enabled))
+    return build_figma_ai_brief(layout_json=request.layout_json, project_init=request.project_init, config=cfg)
 

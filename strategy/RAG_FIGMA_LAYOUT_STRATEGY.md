@@ -14,6 +14,30 @@ in eine repo‑taugliche Strategie.
 3. **Intelligente Design-Vorschläge**
    - Empfehlungen basierend auf „ähnlichen Magazin-Layouts“.
 
+## Figma AI Integration (Modus 1)
+
+**Ziel:** Figma als *Design-Generator* (Figma AI / Autolayout) nutzen, während RAG als *Content- und Pattern-Geber* dient.
+
+**Wichtig:** Figma AI bietet aktuell keine stabile öffentliche „Generate Design“-API. Deshalb ist **Modus 1** als „Prompt-Pack + Import“ definiert:
+
+1. Backend generiert einen **Figma AI Prompt Pack** (Brief) aus:
+   - Layout-JSON (Text/Snippets/Struktur)
+   - `project_init.json` (Design-Constraints)
+   - optional RAG Retrieval (ähnliche Layout-Patterns, top-k)
+2. Der Prompt Pack wird in Figma AI genutzt (manuell oder später via separatem Automation-Agent).
+3. Ergebnis-Frames werden danach über die existierenden Endpoints importiert:
+   - `POST /api/figma/frames/import` → Layout-JSON zurück in die Scribus-Pipeline
+
+### Endpoint
+- `POST /api/figma/ai/brief` erzeugt den Prompt Pack (Mode 1), optional mit RAG-Anreicherung.
+
+### Konfiguration (kanonisch)
+Siehe `project_init.json.template`:
+- `figma.enabled`
+- `figma.mode = 1`
+- `figma.file_key`
+- `figma.ai.rag_enabled`, `figma.ai.top_k`
+
 ## Architektur (High-Level)
 
 ```mermaid
@@ -72,4 +96,3 @@ flowchart TD
    - `POST /api/rag/search`
 3. Plugin-UI:
    - Suche „Ähnliche Layouts“ + Ergebnisliste + „Kontext übernehmen“.
-

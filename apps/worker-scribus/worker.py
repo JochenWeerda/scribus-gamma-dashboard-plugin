@@ -17,8 +17,18 @@ from packages.artifact_store import get_artifact_store
 from packages.common.models import ArtifactType, JobStatus
 from packages.sla_compiler import compile_layout_to_sla
 from packages.event_bus import get_event_bus
-from build_metadata import generate_build_metadata
-from retry import retry_on_failure
+from packages.workflow import WorkflowConfig, WorkflowOrchestrator
+# These imports should work both when the file is imported as a module (`worker`)
+# and when imported as a package (`apps.worker-scribus`).
+try:
+    from .build_metadata import generate_build_metadata  # type: ignore
+except Exception:
+    from build_metadata import generate_build_metadata  # type: ignore
+
+try:
+    from .retry import retry_on_failure  # type: ignore
+except Exception:
+    from retry import retry_on_failure  # type: ignore
 
 # Database
 DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://sla_user:sla_password@localhost:5432/sla_pipeline")
@@ -31,6 +41,11 @@ redis_conn = redis.from_url(REDIS_URL)
 
 # Artifact Store
 artifact_store = get_artifact_store()
+
+try:
+    event_bus = get_event_bus()
+except Exception:
+    event_bus = None
 
 
 def _log_job(db, job_id: UUID, level: str, message: str, context: dict = None):
@@ -186,8 +201,8 @@ def process_compile_job(job_id: str):
         export_queue = Queue("export", connection=redis_conn)
         export_queue.enqueue(
             "worker.process_export_job",
-            job_id=str(job_uuid),
-            sla_artifact_id=str(output_artifact_id),
+            str(job_uuid),
+            str(output_artifact_id),
             job_timeout="20m"
         )
         _log_job(db, job_uuid, "INFO", "Export job enqueued")
@@ -214,7 +229,7 @@ def process_compile_job(job_id: str):
         db.commit()
         
         # Event-Bus: Job compilation completed (wenn aktiviert)
-        if hasattr(event_bus, 'publish'):
+        if event_bus is not None and hasattr(event_bus, "publish"):
             event_bus.publish(
                 "jobs",
                 "job.compilation.completed",
@@ -248,7 +263,7 @@ def process_compile_job(job_id: str):
         db.commit()
         
         # Event-Bus: Job failed (wenn aktiviert)
-        if hasattr(event_bus, 'publish'):
+        if event_bus is not None and hasattr(event_bus, "publish"):
             event_bus.publish(
                 "jobs",
                 "job.failed",
@@ -261,6 +276,383 @@ def process_compile_job(job_id: str):
         print(f"[ERROR] Job {job_id} failed: {error_msg}", file=sys.stderr)
         raise
     
+    finally:
+        db.close()
+
+
+def _insert_artifact_row(
+    db,
+    *,
+    artifact_type: ArtifactType,
+    storage_uri: str,
+    file_name: str,
+    file_size: int,
+    mime_type: str,
+    checksum_md5: str,
+    metadata: dict | None = None,
+):
+    result = db.execute(
+        text(
+            """
+            INSERT INTO artifacts (
+                artifact_type, storage_type, storage_uri, file_name, file_size,
+                mime_type, checksum_md5, metadata
+            )
+            VALUES (:type, :storage_type, :uri, :file_name, :file_size, :mime_type, :checksum, :metadata)
+            RETURNING id
+        """
+        ),
+        {
+            "type": artifact_type.value,
+            "storage_type": "s3",
+            "uri": storage_uri,
+            "file_name": file_name,
+            "file_size": file_size,
+            "mime_type": mime_type,
+            "checksum": checksum_md5,
+            "metadata": json.dumps(metadata or {}),
+        },
+    )
+    return result.fetchone()[0]
+
+
+def _zip_dir(src_dir: Path, zip_path: Path) -> None:
+    import zipfile
+
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for p in src_dir.rglob("*"):
+            if p.is_file():
+                zf.write(p, arcname=str(p.relative_to(src_dir)).replace("\\", "/"))
+
+
+def process_workflow_job(job_id: str):
+    """
+    Prozessiert einen Workflow-Job.
+
+    Input: workflow bundle ZIP (manifest.json + json/*.json + optional gamma/*.zip + optional project_init.json)
+    Output: zipped workflow outputs uploaded as ArtifactType.WORKFLOW_REPORT.
+    """
+
+    db = SessionLocal()
+    job_uuid = UUID(job_id)
+
+    try:
+        db.execute(
+            text("UPDATE jobs SET status = :status, started_at = NOW() WHERE id = :job_id"),
+            {"status": JobStatus.RUNNING.value, "job_id": job_uuid},
+        )
+        db.commit()
+        _log_job(db, job_uuid, "INFO", f"Job {job_id} started: Workflow")
+
+        result = db.execute(
+            text("SELECT input_artifact_id, metadata FROM jobs WHERE id = :job_id"),
+            {"job_id": job_uuid},
+        )
+        row = result.fetchone()
+        if not row or not row[0]:
+            raise ValueError(f"Job {job_id} hat kein input_artifact_id")
+
+        input_artifact_id = row[0]
+        job_metadata_raw = row[1]
+        if isinstance(job_metadata_raw, dict):
+            job_metadata = job_metadata_raw
+        elif isinstance(job_metadata_raw, str):
+            try:
+                job_metadata = json.loads(job_metadata_raw) if job_metadata_raw else {}
+            except Exception:
+                job_metadata = {}
+        else:
+            job_metadata = {}
+
+        result = db.execute(
+            text("SELECT storage_uri, file_name FROM artifacts WHERE id = :artifact_id"),
+            {"artifact_id": input_artifact_id},
+        )
+        row = result.fetchone()
+        if not row:
+            raise ValueError(f"Artefakt {input_artifact_id} nicht gefunden")
+        storage_uri, in_file_name = row[0], row[1]
+
+        bundle_bytes = _download_artifact_with_retry(artifact_store, storage_uri)
+
+        with tempfile.TemporaryDirectory(prefix="workflow_") as tmp:
+            tmp_path = Path(tmp)
+            in_zip = tmp_path / "bundle.zip"
+            in_zip.write_bytes(bundle_bytes)
+
+            import zipfile
+
+            extract_root = tmp_path / "input"
+            extract_root.mkdir(parents=True, exist_ok=True)
+            with zipfile.ZipFile(in_zip, "r") as zf:
+                zf.extractall(extract_root)
+
+            # locate manifest.json
+            manifests = list(extract_root.rglob("manifest.json"))
+            if not manifests:
+                raise ValueError("bundle missing manifest.json")
+            manifest_path = manifests[0]
+            pptx_root = manifest_path.parent
+
+            # locate optional project_init.json
+            project_init_path = None
+            for cand in ["project_init.json", "project_init.json.template"]:
+                found = list(extract_root.rglob(cand))
+                if found:
+                    project_init_path = found[0]
+                    break
+
+            # gamma dir: collect any *.zip (excluding bundle) into a dedicated folder
+            gamma_dir = tmp_path / "gamma"
+            gamma_dir.mkdir(parents=True, exist_ok=True)
+            for zp in extract_root.rglob("*.zip"):
+                try:
+                    if zp.resolve() == in_zip.resolve():
+                        continue
+                except Exception:
+                    pass
+                # Gamma exports are expected to be named <pptx_stem>.zip
+                target = gamma_dir / zp.name
+                if target.exists():
+                    continue
+                try:
+                    target.write_bytes(zp.read_bytes())
+                except Exception:
+                    continue
+
+            out_root = tmp_path / "out"
+            layout_out = out_root / "layout_json"
+            variants_out = out_root / "layout_json_variants"
+            gamma_crops_out = out_root / "gamma_crops"
+            quality_out = out_root / "quality"
+            resume_path = out_root / "workflow_state.json"
+
+            cfg = WorkflowConfig(
+                manifest_path=manifest_path,
+                pptx_root=pptx_root,
+                layout_out=layout_out,
+                variants_out=variants_out,
+                project_init=project_init_path,
+                resume_path=resume_path,
+                generate_variants=bool(job_metadata.get("generate_variants", True)),
+                gamma_png_dir=gamma_dir if gamma_dir.exists() and any(gamma_dir.glob("*.zip")) else None,
+                gamma_crops_out=gamma_crops_out,
+                gamma_sync=bool(job_metadata.get("gamma_sync", False)),
+                gamma_crop_kinds=tuple(job_metadata.get("gamma_crop_kinds") or ("infobox",)),
+                gamma_attach_to_variants=bool(job_metadata.get("gamma_attach_to_variants", False)),
+                gamma_attach_kinds=tuple(job_metadata.get("gamma_attach_kinds") or ("image_box",)),
+                quality_check=bool(job_metadata.get("quality_check", True)),
+                quality_on_variants=bool(job_metadata.get("quality_on_variants", True)),
+                quality_out=quality_out,
+                quality_checks=tuple(job_metadata.get("quality_checks") or ("preflight", "amazon")),
+                force=bool(job_metadata.get("force", False)),
+                retry_max=1,
+            )
+
+            wf = WorkflowOrchestrator(cfg)
+            wf.run()
+
+            publish_artifacts = bool(job_metadata.get("publish_artifacts", True))
+            published = {"crops": [], "variants": [], "layouts": [], "quality": None}
+
+            if publish_artifacts:
+                # Upload gamma crops and rewrite variant json imageUrl to /v1/artifacts/{id}
+                crop_id_by_path: dict[str, str] = {}
+                for png in gamma_crops_out.rglob("*.png"):
+                    data = png.read_bytes()
+                    uri, fname, fsize = _upload_artifact_with_retry(
+                        artifact_store,
+                        data,
+                        ArtifactType.PNG,
+                        file_name=f"gamma_crop_{job_id}_{png.name}",
+                        mime_type="image/png",
+                    )
+                    checksum = artifact_store.compute_checksum(data)
+                    aid = _insert_artifact_row(
+                        db,
+                        artifact_type=ArtifactType.PNG,
+                        storage_uri=uri,
+                        file_name=fname,
+                        file_size=fsize,
+                        mime_type="image/png",
+                        checksum_md5=checksum,
+                        metadata={"job_id": job_id, "kind": "gamma_crop", "path": str(png.relative_to(out_root)).replace("\\", "/")},
+                    )
+                    crop_id_by_path[str(png)] = str(aid)
+                    published["crops"].append({"path": str(png.relative_to(out_root)).replace("\\", "/"), "artifact_id": str(aid)})
+
+                def _rewrite_json_images(path: Path):
+                    try:
+                        doc = json.loads(path.read_text(encoding="utf-8"))
+                    except Exception:
+                        return
+                    changed = False
+                    for page in doc.get("pages", []) or []:
+                        for obj in page.get("objects", []) or []:
+                            if obj.get("type") != "image":
+                                continue
+                            if not obj.get("gammaCrop"):
+                                continue
+                            url = obj.get("imageUrl")
+                            if not url:
+                                continue
+                            local = url
+                            # resolve relative paths against out_root
+                            try:
+                                if not Path(local).is_absolute():
+                                    local = str((out_root / local).resolve())
+                            except Exception:
+                                pass
+                            aid = crop_id_by_path.get(local)
+                            if aid:
+                                obj["imageUrl"] = f"/v1/artifacts/{aid}"
+                                obj["gammaCropArtifactId"] = aid
+                                changed = True
+                    if changed:
+                        path.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+
+                for vj in variants_out.rglob("*.json"):
+                    _rewrite_json_images(vj)
+
+                # Upload updated layout_json + variants + quality report
+                for lp in layout_out.rglob("*.json"):
+                    data = lp.read_bytes()
+                    uri, fname, fsize = _upload_artifact_with_retry(
+                        artifact_store,
+                        data,
+                        ArtifactType.LAYOUT_JSON,
+                        file_name=f"workflow_layout_{job_id}_{lp.name}",
+                        mime_type="application/json",
+                    )
+                    checksum = artifact_store.compute_checksum(data)
+                    aid = _insert_artifact_row(
+                        db,
+                        artifact_type=ArtifactType.LAYOUT_JSON,
+                        storage_uri=uri,
+                        file_name=fname,
+                        file_size=fsize,
+                        mime_type="application/json",
+                        checksum_md5=checksum,
+                        metadata={"job_id": job_id, "kind": "layout_json"},
+                    )
+                    published["layouts"].append(str(aid))
+
+                for vp in variants_out.rglob("*.json"):
+                    data = vp.read_bytes()
+                    uri, fname, fsize = _upload_artifact_with_retry(
+                        artifact_store,
+                        data,
+                        ArtifactType.LAYOUT_JSON,
+                        file_name=f"workflow_variant_{job_id}_{vp.name}",
+                        mime_type="application/json",
+                    )
+                    checksum = artifact_store.compute_checksum(data)
+                    aid = _insert_artifact_row(
+                        db,
+                        artifact_type=ArtifactType.LAYOUT_JSON,
+                        storage_uri=uri,
+                        file_name=fname,
+                        file_size=fsize,
+                        mime_type="application/json",
+                        checksum_md5=checksum,
+                        metadata={"job_id": job_id, "kind": "variant_json"},
+                    )
+                    published["variants"].append(str(aid))
+
+                qrep = quality_out / "quality_report.json"
+                if qrep.exists():
+                    data = qrep.read_bytes()
+                    uri, fname, fsize = _upload_artifact_with_retry(
+                        artifact_store,
+                        data,
+                        ArtifactType.PREFLIGHT,
+                        file_name=f"workflow_quality_{job_id}.json",
+                        mime_type="application/json",
+                    )
+                    checksum = artifact_store.compute_checksum(data)
+                    aid = _insert_artifact_row(
+                        db,
+                        artifact_type=ArtifactType.PREFLIGHT,
+                        storage_uri=uri,
+                        file_name=fname,
+                        file_size=fsize,
+                        mime_type="application/json",
+                        checksum_md5=checksum,
+                        metadata={"job_id": job_id, "kind": "quality_report"},
+                    )
+                    published["quality"] = str(aid)
+
+            # Always upload a single bundle of the output dir
+            out_zip = tmp_path / f"workflow_{job_id}.zip"
+            _zip_dir(out_root, out_zip)
+            out_data = out_zip.read_bytes()
+            out_uri, out_fname, out_size = _upload_artifact_with_retry(
+                artifact_store,
+                out_data,
+                ArtifactType.WORKFLOW_REPORT,
+                file_name=f"workflow_{job_id}.zip",
+                mime_type="application/zip",
+            )
+            out_checksum = artifact_store.compute_checksum(out_data)
+            out_artifact_id = _insert_artifact_row(
+                db,
+                artifact_type=ArtifactType.WORKFLOW_REPORT,
+                storage_uri=out_uri,
+                file_name=out_fname,
+                file_size=out_size,
+                mime_type="application/zip",
+                checksum_md5=out_checksum,
+                metadata={"job_id": job_id, "kind": "workflow_report", "input_bundle": in_file_name, "published": published},
+            )
+
+            db.execute(
+                text(
+                    """
+                    UPDATE jobs
+                    SET status = :status, completed_at = NOW(), output_artifact_id = :out_id, metadata = :metadata
+                    WHERE id = :job_id
+                """
+                ),
+                {
+                    "status": JobStatus.COMPLETED.value,
+                    "out_id": out_artifact_id,
+                    "job_id": job_uuid,
+                    "metadata": json.dumps({**job_metadata, "published": published, "output_artifact_id": str(out_artifact_id)}),
+                },
+            )
+            db.commit()
+
+            if event_bus is not None and hasattr(event_bus, "publish"):
+                event_bus.publish(
+                    "workflow",
+                    "workflow.job.completed",
+                    {"job_id": job_id, "output_artifact_id": str(out_artifact_id)},
+                )
+
+            _log_job(db, job_uuid, "INFO", f"Workflow completed: output -> {out_uri}")
+
+    except Exception as e:
+        db.rollback()
+        error_msg = str(e)
+        _log_job(db, job_uuid, "ERROR", f"Workflow failed: {error_msg}", {"error": error_msg})
+        db.execute(
+            text(
+                """
+                UPDATE jobs
+                SET status = :status, error_message = :error, completed_at = NOW()
+                WHERE id = :job_id
+            """
+            ),
+            {"status": JobStatus.FAILED.value, "error": error_msg, "job_id": job_uuid},
+        )
+        db.commit()
+
+        if event_bus is not None and hasattr(event_bus, "publish"):
+            event_bus.publish("workflow", "workflow.job.failed", {"job_id": job_id, "error": error_msg})
+
+        print(f"[ERROR] Workflow job {job_id} failed: {error_msg}", file=sys.stderr)
+        raise
     finally:
         db.close()
 
@@ -436,7 +828,7 @@ def process_export_job(job_id: str, sla_artifact_id: str):
             db.commit()
             
             # Event-Bus: Export completed (wenn aktiviert)
-            if hasattr(event_bus, 'publish'):
+            if event_bus is not None and hasattr(event_bus, "publish"):
                 event_bus.publish(
                     "jobs",
                     "job.export.completed",
@@ -478,5 +870,5 @@ def process_export_job(job_id: str, sla_artifact_id: str):
 
 if __name__ == "__main__":
     # RQ Worker starten
-    worker = Worker(["compile", "export"], connection=redis_conn)
+    worker = Worker(["compile", "export", "workflow"], connection=redis_conn)
     worker.work()

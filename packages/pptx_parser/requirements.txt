@@ -1,0 +1,2 @@
+# This package currently converts existing extracted JSON to Layout JSON.
+# No external dependencies required.

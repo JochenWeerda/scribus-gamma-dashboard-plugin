@@ -1,0 +1,26 @@
+# Beispiel für RAG-Service Integration in docker-compose.yml
+# 
+# Füge diesen Service zu deiner bestehenden docker-compose.yml hinzu:
+
+rag-service:
+  build:
+    context: ../packages/rag_service
+    dockerfile: Dockerfile
+  volumes:
+    - ../packages:/packages
+    - rag_chroma_db:/app/chroma_db
+  environment:
+    - CHROMA_DB_PATH=/app/chroma_db
+    - EMBEDDING_MODEL=paraphrase-multilingual-mpnet-base-v2
+    - CLIP_MODEL=clip-ViT-B-32
+    - PYTHONPATH=/app:/packages
+  depends_on:
+    - api-gateway
+  # Optional: Als separater Service mit eigenem Port
+  # ports:
+  #   - "8005:8005"
+
+volumes:
+  rag_chroma_db:
+    driver: local
+

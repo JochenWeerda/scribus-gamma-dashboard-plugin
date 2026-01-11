@@ -121,15 +121,23 @@ elseif(TEST_STEP EQUAL "2")
 else()
     set(PLUGIN_SOURCES
         gamma_dashboard_plugin.cpp
+        gamma_dashboard_exports.cpp
         gamma_dashboard_dock.cpp
         gamma_api_client.cpp
         gamma_api_settings_dialog.cpp
+        gamma_figma_browser.cpp
+        gamma_rag_search_dialog.cpp
+        gamma_sla_inserter.cpp
     )
     set(PLUGIN_HEADERS
         gamma_dashboard_plugin.h
         gamma_dashboard_dock.h
         gamma_api_client.h
         gamma_api_settings_dialog.h
+        gamma_debug_log.h
+        gamma_figma_browser.h
+        gamma_rag_search_dialog.h
+        gamma_sla_inserter.h
     )
     message(STATUS "TEST STEP 3: Full version (with Q_OBJECT)")
 endif()

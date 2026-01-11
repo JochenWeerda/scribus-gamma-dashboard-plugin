@@ -30,11 +30,19 @@ signals:
     void pipelineStartRequested();
     void pipelineStopRequested();
     void settingsRequested();
+    void findImagesForTextRequested();
+    void findTextsForImageRequested();
+    void suggestTextImagePairsRequested();
+    void workflowRunRequested(const QString& bundleZipPath);
 
 private slots:
     void onPipelineStartClicked();
     void onPipelineStopClicked();
     void onSettingsClicked();
+    void onFindImagesForTextClicked();
+    void onFindTextsForImageClicked();
+    void onSuggestTextImagePairsClicked();
+    void onWorkflowRunClicked();
 
 private:
     void setupUI();
@@ -48,4 +56,11 @@ private:
     QComboBox* m_pipelineSelect;
     QTextEdit* m_logView;
     QLabel* m_configPathLabel;
+    
+    // RAG Text-Image Matching Buttons
+    QPushButton* m_findImagesForTextButton;
+    QPushButton* m_findTextsForImageButton;
+    QPushButton* m_suggestPairsButton;
+
+    QPushButton* m_workflowRunButton;
 };

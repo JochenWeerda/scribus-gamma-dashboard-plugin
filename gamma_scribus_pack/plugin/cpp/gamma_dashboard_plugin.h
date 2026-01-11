@@ -21,11 +21,13 @@ class QWidget;
 // Forward declarations (Scribus)
 class ScribusMainWindow;
 class ScribusDoc;
-struct Prefs_Pane;
+class Prefs_Pane;
 
 class GammaDashboardDock;
 class GammaApiClient;
 class GammaApiSettingsDialog;
+class GammaFigmaBrowser;
+class GammaSLAInserter;
 
 /**
  * @brief Gamma Dashboard Plugin for Scribus
@@ -33,7 +35,7 @@ class GammaApiSettingsDialog;
  * Native C++ Plugin with Dock Widget Integration.
  * Inspired by MCP Dashboard Plugin Pattern.
  */
-class GammaDashboardPlugin : public ScPlugin
+class GammaDashboardPlugin : public ScActionPlugin
 {
     Q_OBJECT
 
@@ -52,6 +54,9 @@ public:
 
     QString fullTrName() const override;
     void addToMainWindowMenu(ScribusMainWindow *) override;
+    
+    // ScActionPlugin methods
+    bool run(ScribusDoc* doc, const QString& target = QString()) override;
 
     // Virtual methods from ScPlugin (with default implementations)
     bool newPrefsPanelWidget(QWidget* parent, Prefs_Pane*& panel) override;
@@ -60,15 +65,15 @@ public:
     void changedDoc(ScribusDoc* doc) override;
 
     // Additional plugin info methods
-    const ScPlugin::AboutData* getAboutData() const override;
-    void deleteAboutData(const ScPlugin::AboutData* about) const override;
+    const ScActionPlugin::AboutData* getAboutData() const override;
+    void deleteAboutData(const ScActionPlugin::AboutData* about) const override;
 
 private slots:
     void toggleDashboard();
     void showSettingsDialog();
     void onPipelineStart();
     void onPipelineStop();
-    void onSettingsChanged(const QString& baseUrl, const QString& apiKey, bool useMockMode);
+    void onSettingsChanged(const QString& baseUrl, const QString& apiKey, const QString& provider, bool useMockMode);
     void handleStatusReceived(const QJsonObject& obj);
     void handlePipelineReceived(const QJsonObject& obj);
     void handleAssetsReceived(const QJsonObject& obj);
@@ -77,6 +82,17 @@ private slots:
     void handleErrorOccurred(const QString& error, int httpStatusCode);
     void handlePipelineStartResult(bool success, const QString& message);
     void handlePipelineStopResult(bool success, const QString& message);
+    void handleRAGImagesForTextReceived(const QJsonArray& images);
+    void handleRAGTextsForImageReceived(const QJsonArray& texts);
+    void handleRAGSuggestPairsReceived(const QJsonArray& suggestions);
+    void onImportFrameFromFigma();
+    void onExportPageToFigma();
+    void onFigmaFrameImportRequested(const QString& fileKey, const QString& frameId);
+    void onFindImagesForText();
+    void onFindTextsForImage();
+    void onSuggestTextImagePairs();
+    void onWorkflowRunBundle(const QString& bundleZipPath);
+    void handleWorkflowJobCreated(const QJsonObject& job);
 
 private:
     QMainWindow* resolveMainWindow() const;
@@ -92,11 +108,18 @@ private:
     QPointer<GammaDashboardDock> m_dock = nullptr;
     QAction* m_action = nullptr;
     QAction* m_settingsAction = nullptr;
+    QAction* m_importFigmaAction = nullptr;
+    QAction* m_exportFigmaAction = nullptr;
     GammaApiClient* m_apiClient = nullptr;
+    GammaFigmaBrowser* m_figmaBrowser = nullptr;
+    GammaSLAInserter* m_slaInserter = nullptr;
     QTimer* m_mockTimer = nullptr;
+    ScribusDoc* m_currentDoc = nullptr;  // Aktuelles Dokument (via setDoc())
     QString m_baseUrl;
     QString m_apiKey;
+    QString m_llmProvider;
     bool m_useMockMode = false;
+    bool m_settingsMenuRegistered = false;
 };
 
 // Plugin export functions (required by Scribus)
@@ -105,4 +128,3 @@ extern "C" PLUGIN_API ScPlugin* gamma_dashboard_getPlugin();
 extern "C" PLUGIN_API void gamma_dashboard_freePlugin(ScPlugin* plugin);
 
 #endif // GAMMA_DASHBOARD_PLUGIN_H
-

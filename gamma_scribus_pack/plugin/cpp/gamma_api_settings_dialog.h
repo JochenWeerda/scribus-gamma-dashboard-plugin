@@ -6,6 +6,7 @@ class QLineEdit;
 class QPushButton;
 class QLabel;
 class QCheckBox;
+class QComboBox;
 
 /**
  * @brief Settings Dialog for Gamma Dashboard API Configuration
@@ -20,14 +21,16 @@ public:
 
     QString baseUrl() const;
     QString apiKey() const;
+    QString provider() const;
     bool useMockMode() const;
 
     void setBaseUrl(const QString& url);
     void setApiKey(const QString& key);
+    void setProvider(const QString& provider);
     void setUseMockMode(bool useMock);
 
 signals:
-    void settingsChanged(const QString& baseUrl, const QString& apiKey, bool useMockMode);
+    void settingsChanged(const QString& baseUrl, const QString& apiKey, const QString& provider, bool useMockMode);
 
 private slots:
     void onTestConnectionClicked();
@@ -37,9 +40,13 @@ private slots:
 private:
     void setupUI();
     bool validateUrl(const QString& url) const;
+    void onProviderChanged(int index);
+    void updateProviderHints();
 
+    QComboBox* m_providerCombo;
     QLineEdit* m_urlEdit;
     QLineEdit* m_apiKeyEdit;
+    QLabel* m_apiKeyHint;
     QCheckBox* m_mockModeCheckBox;
     QPushButton* m_testButton;
     QLabel* m_statusLabel;

@@ -23,6 +23,7 @@ class JobType(str, Enum):
     EXPORT_PNG = "export_png"
     EXPORT_PDF = "export_pdf"
     BATCH_EXPORT = "batch_export"
+    WORKFLOW = "workflow"
 
 
 class ArtifactType(str, Enum):
@@ -33,6 +34,8 @@ class ArtifactType(str, Enum):
     PDF = "pdf"
     ASSET_IMAGE = "asset_image"
     PREFLIGHT = "preflight"
+    WORKFLOW_BUNDLE = "workflow_bundle"
+    WORKFLOW_REPORT = "workflow_report"
 
 
 class StorageType(str, Enum):

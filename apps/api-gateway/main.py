@@ -32,6 +32,35 @@ from middleware import CorrelationIDMiddleware, RequestLoggingMiddleware, RateLi
 from metrics import PrometheusMiddleware, metrics_endpoint, record_job_created, update_queue_size
 from packages.event_bus import get_event_bus
 from packages.cache import get_cache
+from dialog import router as dialog_router
+from variants import router as variants_router
+from quality import router as quality_router
+from workflow import router as workflow_router
+
+# Optional integrations (Figma/RAG)
+try:
+    from packages.figma_integration.api_endpoints import (
+        router as figma_router,
+        init_figma_service,
+    )
+    from packages.figma_integration.minio_integration import (
+        create_minio_client,
+        ensure_minio_bucket,
+    )
+except Exception:
+    figma_router = None
+    init_figma_service = None
+    create_minio_client = None
+    ensure_minio_bucket = None
+
+try:
+    from packages.rag_service.api_endpoints import (
+        router as rag_router,
+        init_rag_service,
+    )
+except Exception:
+    rag_router = None
+    init_rag_service = None
 
 # Logging Setup
 logging.basicConfig(
@@ -48,6 +77,16 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+# Register optional routers (they may still return 503 until initialized)
+if figma_router is not None:
+    app.include_router(figma_router)
+if rag_router is not None:
+    app.include_router(rag_router)
+app.include_router(dialog_router)
+app.include_router(variants_router)
+app.include_router(quality_router)
+app.include_router(workflow_router)
 
 # Middleware
 app.add_middleware(CorrelationIDMiddleware)
@@ -82,10 +121,15 @@ SessionLocal = sessionmaker(bind=engine)
 
 # Redis Queue
 redis_conn = redis.from_url(config.REDIS_URL, socket_connect_timeout=5, socket_timeout=5)
-queue = Queue("compile", connection=redis_conn)
+compile_queue = Queue("compile", connection=redis_conn)
+workflow_queue = Queue("workflow", connection=redis_conn)
 
 # Artifact Store
 artifact_store = get_artifact_store()
+
+# Optional runtime services
+event_bus = get_event_bus() if config.EVENT_BUS_ENABLED else None
+cache = get_cache() if config.CACHE_ENABLED else None
 
 # Validate Config
 try:
@@ -97,6 +141,71 @@ except ValueError as e:
 # Setup Event Listeners
 if config.EVENT_BUS_ENABLED:
     setup_event_listeners()
+
+
+@app.on_event("startup")
+async def init_optional_integrations():
+    """Initialisiert optionale Subsysteme (Figma/RAG) anhand ENV/Config."""
+    # RAG (optional)
+    if init_rag_service is not None and os.getenv("ENABLE_RAG", "0") == "1":
+        init_rag_service(
+            chroma_db_path=os.getenv("CHROMA_DB_PATH"),
+            embedding_model=os.getenv("EMBEDDING_MODEL"),
+            clip_model=os.getenv("CLIP_MODEL"),
+        )
+
+    # Figma (optional)
+    if init_figma_service is not None and os.getenv("ENABLE_FIGMA", "0") == "1":
+        minio_client = None
+        bucket = os.getenv("FIGMA_MINIO_BUCKET", "figma-assets")
+
+        if create_minio_client is not None and ensure_minio_bucket is not None:
+            minio_client = create_minio_client(
+                endpoint=config.MINIO_ENDPOINT,
+                access_key=config.MINIO_ACCESS_KEY,
+                secret_key=config.MINIO_SECRET_KEY,
+                secure=config.MINIO_SECURE,
+            )
+            if minio_client:
+                ensure_minio_bucket(minio_client, bucket)
+
+        init_figma_service(
+            access_token=os.getenv("FIGMA_ACCESS_TOKEN"),
+            minio_client=minio_client,
+            minio_bucket=bucket,
+            auto_indexer=None,  # später: RAG AutoIndexer verdrahten
+        )
+
+
+def _enqueue_job_task(job_id: UUID, job_type: str) -> None:
+    """RQ Enqueue im BackgroundTask-Kontext."""
+    try:
+        # Worker läuft in apps/worker-scribus/worker.py (Module: worker)
+        if job_type == JobType.COMPILE.value:
+            compile_queue.enqueue(
+                "worker.process_compile_job",
+                str(job_id),
+                job_timeout="20m",
+            )
+        elif job_type == JobType.WORKFLOW.value:
+            workflow_queue.enqueue(
+                "worker.process_workflow_job",
+                str(job_id),
+                job_timeout="60m",
+            )
+        else:
+            compile_queue.enqueue(
+                "worker.process_compile_job",
+                str(job_id),
+                job_timeout="20m",
+            )
+
+        try:
+            update_queue_size(compile_queue.count + workflow_queue.count)
+        except Exception:
+            pass
+    except Exception:
+        logger.exception("Failed to enqueue job", extra={"job_id": str(job_id), "job_type": job_type})
 
 
 def verify_api_key(x_api_key: str = Header(None, alias="X-API-Key")):
@@ -177,8 +286,109 @@ async def detailed_health_check():
     return JSONResponse(content=health_status, status_code=status_code)
 
 
+# -----------------------------------------------------------------------------
+# Plugin Compatibility Endpoints (/api/*)
+# -----------------------------------------------------------------------------
+
+@app.get("/api/status")
+async def plugin_status(_: bool = Depends(verify_api_key)):
+    """Legacy-Status für das Scribus-Plugin."""
+    return {
+        "status": "ok",
+        "service": "api-gateway",
+        "services": {
+            "jobs": "enabled",
+            "figma": "enabled" if os.getenv("ENABLE_FIGMA", "0") == "1" and figma_router is not None else "disabled",
+            "rag": "enabled" if os.getenv("ENABLE_RAG", "0") == "1" and rag_router is not None else "disabled",
+        },
+        "endpoints": {
+            "jobs": "/v1/jobs",
+            "figma": "/api/figma",
+            "rag": "/api/rag",
+        },
+    }
+
+
+@app.get("/api/pipeline")
+async def plugin_pipeline(_: bool = Depends(verify_api_key)):
+    """Legacy-Pipeline-Endpunkt; mappt intern auf Job-Queue/DB."""
+    db = SessionLocal()
+    try:
+        recent = db.execute(
+            text(
+                """
+                SELECT id, job_type, status, priority, created_at, updated_at
+                FROM jobs
+                ORDER BY created_at DESC
+                LIMIT 20
+                """
+            )
+        ).mappings().all()
+        return {
+            "pipelines": [
+                {
+                    "id": "compile",
+                    "name": "Compile",
+                    "queue_size": compile_queue.count,
+                },
+                {
+                    "id": "workflow",
+                    "name": "Workflow",
+                    "queue_size": workflow_queue.count,
+                }
+            ],
+            "recent_jobs": list(recent),
+        }
+    finally:
+        db.close()
+
+
+@app.get("/api/assets")
+async def plugin_assets(_: bool = Depends(verify_api_key)):
+    """Legacy-Assets-Endpunkt (Artefakte aus DB)."""
+    db = SessionLocal()
+    try:
+        artifacts = db.execute(
+            text(
+                """
+                SELECT id, artifact_type, storage_uri, file_name, file_size, created_at
+                FROM artifacts
+                ORDER BY created_at DESC
+                LIMIT 50
+                """
+            )
+        ).mappings().all()
+        return {"artifacts": list(artifacts)}
+    finally:
+        db.close()
+
+
+@app.get("/api/layout/audit")
+async def plugin_layout_audit(_: bool = Depends(verify_api_key)):
+    """Legacy-Layout-Audit-Endpunkt (noch nicht im Job-Backend verdrahtet)."""
+    return {
+        "status": "not_implemented",
+        "detail": "Layout audit is not wired into the job pipeline yet.",
+    }
+
+
+@app.post("/api/pipeline/{pipeline_id}/start")
+async def plugin_pipeline_start(pipeline_id: str, _: bool = Depends(verify_api_key)):
+    raise HTTPException(status_code=501, detail=f"Pipeline '{pipeline_id}' start not supported via legacy endpoint")
+
+
+@app.post("/api/pipeline/{pipeline_id}/stop")
+async def plugin_pipeline_stop(pipeline_id: str, _: bool = Depends(verify_api_key)):
+    raise HTTPException(status_code=501, detail=f"Pipeline '{pipeline_id}' stop not supported via legacy endpoint")
+
+
 @app.post("/v1/jobs", response_model=JobResponse, status_code=status.HTTP_201_CREATED)
-async def create_job(request: JobCreateRequest, req: Request, _: bool = Depends(verify_api_key)):
+async def create_job(
+    request: JobCreateRequest,
+    req: Request,
+    background_tasks: BackgroundTasks,
+    _: bool = Depends(verify_api_key),
+):
     """
     Erstellt einen neuen Kompilierungs-Job.
     
@@ -268,19 +478,20 @@ async def create_job(request: JobCreateRequest, req: Request, _: bool = Depends(
         background_tasks.add_task(_enqueue_job_task, job_id, JobType.COMPILE.value)
         
         # Event-Bus: Job created
-        event_bus.publish(
-            "jobs",
-            "job.created",
-            {
-                "job_id": str(job_id),
-                "job_type": JobType.COMPILE.value,
-                "status": JobStatus.PENDING.value,
-                "input_artifact_id": str(artifact_id),
-            }
-        )
+        if event_bus is not None and hasattr(event_bus, "publish"):
+            event_bus.publish(
+                "jobs",
+                "job.created",
+                {
+                    "job_id": str(job_id),
+                    "job_type": JobType.COMPILE.value,
+                    "status": JobStatus.PENDING.value,
+                    "input_artifact_id": str(artifact_id),
+                },
+            )
         
         # 6. Response
-        return JobResponse(
+        job_response = JobResponse(
             id=job_id,
             status=JobStatus.PENDING,
             job_type=JobType.COMPILE,
@@ -305,6 +516,8 @@ async def create_job(request: JobCreateRequest, req: Request, _: bool = Depends(
             ),
             output_artifact=None,
         )
+
+        return job_response
     
     except HTTPException:
         db.rollback()
@@ -324,7 +537,7 @@ async def get_job(job_id: UUID, _: bool = Depends(verify_api_key)):
     """Gibt Job-Status und Artefakt-URIs zurück."""
     # Cache-Check (wenn aktiviert)
     cache_key = f"job:{job_id}"
-    if hasattr(cache, 'get'):
+    if cache is not None and hasattr(cache, "get"):
         cached_job = cache.get(cache_key)
         if cached_job:
             return JobResponse(**cached_job)
@@ -360,29 +573,29 @@ async def get_job(job_id: UUID, _: bool = Depends(verify_api_key)):
         
         # Build response
         input_artifact = None
-        if row[13]:  # input_a_id
+        if row[12]:  # input_a_id
             input_artifact = ArtifactInfo(
-                id=row[13],
-                artifact_type=ArtifactType(row[14]),
-                storage_type=StorageType(row[15]),
-                storage_uri=row[16],
-                file_name=row[17],
-                file_size=row[18],
-                mime_type=row[19],
-                created_at=row[20],
+                id=row[12],
+                artifact_type=ArtifactType(row[13]),
+                storage_type=StorageType(row[14]),
+                storage_uri=row[15],
+                file_name=row[16],
+                file_size=row[17],
+                mime_type=row[18],
+                created_at=row[19],
             )
         
         output_artifact = None
-        if row[21]:  # output_a_id
+        if row[20]:  # output_a_id
             output_artifact = ArtifactInfo(
-                id=row[21],
-                artifact_type=ArtifactType(row[22]),
-                storage_type=StorageType(row[23]),
-                storage_uri=row[24],
-                file_name=row[25],
-                file_size=row[26],
-                mime_type=row[27],
-                created_at=row[28],
+                id=row[20],
+                artifact_type=ArtifactType(row[21]),
+                storage_type=StorageType(row[22]),
+                storage_uri=row[23],
+                file_name=row[24],
+                file_size=row[25],
+                mime_type=row[26],
+                created_at=row[27],
             )
         
         return JobResponse(
@@ -393,7 +606,7 @@ async def get_job(job_id: UUID, _: bool = Depends(verify_api_key)):
             input_artifact_id=row[4],
             output_artifact_id=row[5],
             error_message=row[6],
-            metadata=json.loads(row[7]) if row[7] else None,
+            metadata=row[7] if row[7] else None,
             created_at=row[8],
             updated_at=row[9],
             started_at=row[10],
@@ -403,7 +616,7 @@ async def get_job(job_id: UUID, _: bool = Depends(verify_api_key)):
         )
         
         # Cache response (nur wenn completed oder failed - für finaler Status)
-        if hasattr(cache, 'set') and job_response.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
+        if cache is not None and hasattr(cache, "set") and job_response.status in [JobStatus.COMPLETED, JobStatus.FAILED]:
             cache.set(cache_key, job_response.dict(), ttl=3600)  # 1 Stunde
         
         return job_response
@@ -564,5 +777,35 @@ async def get_pdf(job_id: UUID, _: bool = Depends(verify_api_key)):
             headers={"Content-Disposition": f'inline; filename="{file_name}"'}
         )
     
+    finally:
+        db.close()
+
+
+@app.get("/v1/artifacts/{artifact_id}")
+async def download_artifact(artifact_id: UUID, _: bool = Depends(verify_api_key)):
+    """Streams any artifact by id (generic downloader)."""
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            text(
+                """
+                SELECT storage_uri, file_name, mime_type
+                FROM artifacts
+                WHERE id = :artifact_id
+            """
+            ),
+            {"artifact_id": artifact_id},
+        )
+        row = result.fetchone()
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found")
+
+        storage_uri, file_name, mime_type = row[0], row[1], row[2] or "application/octet-stream"
+        data = artifact_store.download(storage_uri)
+        return StreamingResponse(
+            iter([data]),
+            media_type=mime_type,
+            headers={"Content-Disposition": f'inline; filename=\"{file_name}\"'},
+        )
     finally:
         db.close()

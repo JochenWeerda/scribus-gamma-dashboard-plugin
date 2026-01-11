@@ -9,6 +9,7 @@
 #include <QTextEdit>
 #include <QComboBox>
 #include <QVBoxLayout>
+#include <QFileDialog>
 
 namespace {
 QFrame* makeCard(QWidget* parent)
@@ -32,6 +33,10 @@ GammaDashboardDock::GammaDashboardDock(QWidget* parent)
     , m_pipelineSelect(nullptr)
     , m_logView(nullptr)
     , m_configPathLabel(nullptr)
+    , m_findImagesForTextButton(nullptr)
+    , m_findTextsForImageButton(nullptr)
+    , m_suggestPairsButton(nullptr)
+    , m_workflowRunButton(nullptr)
 {
     setObjectName("GammaDashboardDock");
     setWindowTitle("Gamma Dashboard");
@@ -119,10 +124,38 @@ void GammaDashboardDock::setupUI()
     m_configPathLabel->setWordWrap(true);
     configLayout->addLayout(configHeader);
     configLayout->addWidget(m_configPathLabel);
+
+    m_workflowRunButton = new QPushButton("Run Workflow Bundle…", configCard);
+    m_workflowRunButton->setObjectName("gammaWorkflowRunButton");
+    m_workflowRunButton->setToolTip("Select a workflow bundle ZIP and start the end-to-end pipeline in the backend");
+    configLayout->addWidget(m_workflowRunButton);
     main->addWidget(configCard);
     
     // Connect config settings button to same slot
     connect(configSettingsButton, &QPushButton::clicked, this, &GammaDashboardDock::onSettingsClicked);
+
+    // RAG Text-Image Matching Card
+    QFrame* ragCard = makeCard(root);
+    QVBoxLayout* ragLayout = new QVBoxLayout(ragCard);
+    QLabel* ragTitle = new QLabel("RAG Text-Image Matching", ragCard);
+    
+    m_findImagesForTextButton = new QPushButton("Find Images for Text", ragCard);
+    m_findImagesForTextButton->setObjectName("gammaRAGFindImages");
+    m_findImagesForTextButton->setToolTip("Find matching images for selected text object");
+    
+    m_findTextsForImageButton = new QPushButton("Find Texts for Image", ragCard);
+    m_findTextsForImageButton->setObjectName("gammaRAGFindTexts");
+    m_findTextsForImageButton->setToolTip("Find matching texts for selected image object");
+    
+    m_suggestPairsButton = new QPushButton("Suggest Text-Image Pairs", ragCard);
+    m_suggestPairsButton->setObjectName("gammaRAGSuggestPairs");
+    m_suggestPairsButton->setToolTip("Suggest text-image pairings for current page");
+    
+    ragLayout->addWidget(ragTitle);
+    ragLayout->addWidget(m_findImagesForTextButton);
+    ragLayout->addWidget(m_findTextsForImageButton);
+    ragLayout->addWidget(m_suggestPairsButton);
+    main->addWidget(ragCard);
 
     // Log Viewer
     QFrame* logCard = makeCard(root);
@@ -143,6 +176,10 @@ void GammaDashboardDock::setupUI()
     connect(m_pipelineStartButton, &QPushButton::clicked, this, &GammaDashboardDock::onPipelineStartClicked);
     connect(m_pipelineStopButton, &QPushButton::clicked, this, &GammaDashboardDock::onPipelineStopClicked);
     connect(m_settingsButton, &QPushButton::clicked, this, &GammaDashboardDock::onSettingsClicked);
+    connect(m_findImagesForTextButton, &QPushButton::clicked, this, &GammaDashboardDock::onFindImagesForTextClicked);
+    connect(m_findTextsForImageButton, &QPushButton::clicked, this, &GammaDashboardDock::onFindTextsForImageClicked);
+    connect(m_suggestPairsButton, &QPushButton::clicked, this, &GammaDashboardDock::onSuggestTextImagePairsClicked);
+    connect(m_workflowRunButton, &QPushButton::clicked, this, &GammaDashboardDock::onWorkflowRunClicked);
 
     // Styling (dunkles Theme, ähnlich MCP Dashboard)
     root->setStyleSheet(
@@ -156,6 +193,8 @@ void GammaDashboardDock::setupUI()
         "QPushButton#gammaSettingsButton:hover { background-color: #2980b9; }"
         "QPushButton#gammaConfigSettingsButton { background-color: #3498db; color: #ffffff; padding: 4px 8px; border-radius: 4px; font-weight: 500; }"
         "QPushButton#gammaConfigSettingsButton:hover { background-color: #2980b9; }"
+        "QPushButton#gammaWorkflowRunButton { background-color: #9b59b6; color: #ffffff; padding: 6px 10px; border-radius: 6px; font-weight: 600; }"
+        "QPushButton#gammaWorkflowRunButton:hover { background-color: #8e44ad; }"
         "QPushButton#gammaPipelineStart { background-color: #2ecc71; color: #ffffff; padding: 6px 10px; border-radius: 6px; }"
         "QPushButton#gammaPipelineStop { background-color: #e74c3c; color: #ffffff; padding: 6px 10px; border-radius: 6px; }"
         "QProgressBar#gammaPipelineProgress { background-color: #2a2f36; border: 1px solid #2a2f36; border-radius: 4px; height: 8px; }"
@@ -222,5 +261,35 @@ void GammaDashboardDock::onPipelineStopClicked()
 void GammaDashboardDock::onSettingsClicked()
 {
     emit settingsRequested();
+}
+
+void GammaDashboardDock::onFindImagesForTextClicked()
+{
+    emit findImagesForTextRequested();
+}
+
+void GammaDashboardDock::onFindTextsForImageClicked()
+{
+    emit findTextsForImageRequested();
+}
+
+void GammaDashboardDock::onSuggestTextImagePairsClicked()
+{
+    emit suggestTextImagePairsRequested();
+}
+
+void GammaDashboardDock::onWorkflowRunClicked()
+{
+    const QString zipPath = QFileDialog::getOpenFileName(
+        this,
+        tr("Select Workflow Bundle ZIP"),
+        QString(),
+        tr("ZIP files (*.zip)")
+    );
+    if (zipPath.isEmpty())
+        return;
+
+    appendLog(QString("Selected workflow bundle: %1").arg(zipPath));
+    emit workflowRunRequested(zipPath);
 }
 

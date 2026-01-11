@@ -10,12 +10,15 @@
 #include <QTimer>
 #include <QDateTime>
 #include <QElapsedTimer>
+#include <QHttpMultiPart>
+#include <QFile>
+#include <QFileInfo>
 
 GammaApiClient::GammaApiClient(QObject* parent)
     : QObject(parent)
     , m_networkManager(new QNetworkAccessManager(this))
     , m_pollTimer(new QTimer(this))
-    , m_baseUrl("http://localhost:8000")
+    , m_baseUrl("http://localhost:8003")
     , m_apiKey()
     , m_connected(false)
     , m_latencyMs(-1)
@@ -75,6 +78,79 @@ void GammaApiClient::requestLayoutAudit()
     sendGet("/api/layout/audit", "layout_audit");
 }
 
+void GammaApiClient::requestRAGLLMContext(const QString& prompt, int topKLayouts, int topKTexts, int topKImages)
+{
+    QJsonObject payload;
+    payload["prompt"] = prompt;
+    payload["top_k_layouts"] = topKLayouts;
+    payload["top_k_texts"] = topKTexts;
+    payload["top_k_images"] = topKImages;
+
+    QJsonDocument doc(payload);
+    QByteArray data = doc.toJson(QJsonDocument::Compact);
+
+    sendPost("/api/rag/llm-context", data, "rag_llm_context");
+}
+
+void GammaApiClient::requestFindImagesForText(const QString& text, int topK)
+{
+    QJsonObject payload;
+    payload["text"] = text;
+    payload["top_k"] = topK;
+
+    QJsonDocument doc(payload);
+    QByteArray data = doc.toJson(QJsonDocument::Compact);
+
+    sendPost("/api/rag/images/for-text", data, "rag_images_for_text");
+}
+
+void GammaApiClient::requestFindTextsForImage(const QString& imagePath, int topK)
+{
+    QJsonObject payload;
+    payload["image_path"] = imagePath;
+    payload["top_k"] = topK;
+
+    QJsonDocument doc(payload);
+    QByteArray data = doc.toJson(QJsonDocument::Compact);
+
+    sendPost("/api/rag/texts/for-image", data, "rag_texts_for_image");
+}
+
+void GammaApiClient::requestSuggestTextImagePairs(const QJsonObject& layoutJson)
+{
+    QJsonObject payload;
+    payload["layout_json"] = layoutJson;
+
+    QJsonDocument doc(payload);
+    QByteArray data = doc.toJson(QJsonDocument::Compact);
+
+    sendPost("/api/rag/suggest-pairs", data, "rag_suggest_pairs");
+}
+
+void GammaApiClient::requestFigmaFiles()
+{
+    sendGet("/api/figma/files", "figma_files");
+}
+
+void GammaApiClient::requestFigmaFrames(const QString& fileKey)
+{
+    sendGet(QString("/api/figma/files/%1/frames").arg(fileKey), QString("figma_frames:%1").arg(fileKey));
+}
+
+void GammaApiClient::requestFigmaFrameImport(const QString& fileKey, const QString& frameId, int dpi, int pageNumber)
+{
+    QJsonObject payload;
+    payload["file_key"] = fileKey;
+    payload["frame_id"] = frameId;
+    payload["dpi"] = dpi;
+    payload["page_number"] = pageNumber;
+
+    QJsonDocument doc(payload);
+    QByteArray data = doc.toJson(QJsonDocument::Compact);
+
+    sendPost("/api/figma/frames/import", data, "figma_frame_import");
+}
+
 void GammaApiClient::startPipeline(const QString& pipelineId)
 {
     if (pipelineId.isEmpty())
@@ -107,6 +183,56 @@ void GammaApiClient::stopPipeline(const QString& pipelineId)
     QByteArray data = doc.toJson(QJsonDocument::Compact);
 
     sendPost(QString("/api/pipeline/%1/stop").arg(pipelineId), data, "pipeline_stop");
+}
+
+void GammaApiClient::requestWorkflowRun(const QString& bundleZipPath, const QJsonObject& options)
+{
+    QFileInfo fi(bundleZipPath);
+    if (!fi.exists() || !fi.isFile())
+    {
+        emit errorOccurred(QString("Workflow bundle not found: %1").arg(bundleZipPath), 400);
+        return;
+    }
+
+    QHttpMultiPart* multi = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+
+    // options_json form field
+    QJsonObject opts = options;
+    if (opts.isEmpty())
+    {
+        // Recommended defaults
+        opts["generate_variants"] = true;
+        opts["gamma_sync"] = true;
+        opts["gamma_crop_kinds"] = QJsonArray{ "infobox" };
+        opts["gamma_attach_to_variants"] = false;
+        opts["quality_check"] = true;
+        opts["quality_on_variants"] = true;
+        opts["quality_checks"] = QJsonArray{ "preflight", "amazon" };
+        opts["publish_artifacts"] = true;
+        opts["force"] = false;
+    }
+    QHttpPart optionsPart;
+    optionsPart.setHeader(QNetworkRequest::ContentDispositionHeader, QVariant("form-data; name=\"options_json\""));
+    optionsPart.setBody(QJsonDocument(opts).toJson(QJsonDocument::Compact));
+    multi->append(optionsPart);
+
+    // bundle file part
+    QFile* file = new QFile(bundleZipPath, multi);
+    if (!file->open(QIODevice::ReadOnly))
+    {
+        emit errorOccurred(QString("Cannot open workflow bundle: %1").arg(bundleZipPath), 400);
+        multi->deleteLater();
+        return;
+    }
+
+    QHttpPart filePart;
+    filePart.setHeader(QNetworkRequest::ContentTypeHeader, QVariant("application/zip"));
+    filePart.setHeader(QNetworkRequest::ContentDispositionHeader, QVariant(QString("form-data; name=\"bundle\"; filename=\"%1\"").arg(fi.fileName())));
+    filePart.setBodyDevice(file);
+    file->setParent(multi);
+    multi->append(filePart);
+
+    sendMultipart("/v1/workflow/run", multi, "workflow_run");
 }
 
 void GammaApiClient::startPolling(int intervalMs)
@@ -280,8 +406,88 @@ void GammaApiClient::onReplyFinished(QNetworkReply* reply)
         QString message = doc.isObject() ? doc.object().value("message").toString("Pipeline stopped") : "Unknown";
         emit pipelineStopResult(success, message);
     }
+    else if (tag == "rag_llm_context")
+    {
+        if (doc.isObject())
+        {
+            QJsonObject obj = doc.object();
+            QString context = obj.value("context").toString();
+            QJsonObject contextData = obj; // Enthält context, sources, stats
+            emit ragLLMContextReceived(context, contextData);
+        }
+    }
+    else if (tag == "rag_images_for_text")
+    {
+        if (doc.isObject())
+        {
+            QJsonArray images = doc.object().value("images").toArray();
+            emit ragImagesForTextReceived(images);
+        }
+    }
+    else if (tag == "rag_texts_for_image")
+    {
+        if (doc.isObject())
+        {
+            QJsonArray texts = doc.object().value("texts").toArray();
+            emit ragTextsForImageReceived(texts);
+        }
+    }
+    else if (tag == "rag_suggest_pairs")
+    {
+        if (doc.isObject())
+        {
+            QJsonArray suggestions = doc.object().value("suggestions").toArray();
+            emit ragSuggestPairsReceived(suggestions);
+        }
+    }
+    else if (tag == "figma_files")
+    {
+        if (doc.isObject())
+        {
+            QJsonArray files = doc.object().value("files").toArray();
+            emit figmaFilesReceived(files);
+        }
+    }
+    else if (tag == "figma_frames")
+    {
+        if (doc.isObject())
+        {
+            QString fileKey = m_replyTags.value(reply, "").split(":").last(); // Extract fileKey from tag
+            QJsonArray frames = doc.object().value("frames").toArray();
+            emit figmaFramesReceived(fileKey, frames);
+        }
+    }
+    else if (tag == "figma_frame_import")
+    {
+        if (doc.isObject())
+        {
+            emit figmaFrameImportReceived(doc.object());
+        }
+    }
+    else if (tag == "workflow_run")
+    {
+        if (doc.isObject())
+        {
+            emit workflowJobCreated(doc.object());
+        }
+    }
 
     reply->deleteLater();
+}
+
+QNetworkReply* GammaApiClient::sendMultipart(const QString& endpoint, QHttpMultiPart* multiPart, const QString& tag)
+{
+    QUrl url(buildUrl(endpoint));
+    QNetworkRequest request(url);
+    request.setRawHeader("Accept", "application/json");
+
+    if (!m_apiKey.isEmpty())
+        request.setRawHeader("X-API-Key", m_apiKey.toUtf8());
+
+    QNetworkReply* reply = m_networkManager->post(request, multiPart);
+    multiPart->setParent(reply);
+    m_replyTags.insert(reply, tag);
+    return reply;
 }
 
 void GammaApiClient::onPollTimerTimeout()

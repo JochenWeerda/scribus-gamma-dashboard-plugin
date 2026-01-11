@@ -30,10 +30,12 @@ def get_layer_zorder(layer_name: str, zorder: int = None) -> int:
     
     layer_zorders = {
         "Background": 0,
+        "Hintergrund": 0,
         "Images_BG": 10,
         "Images": 20,
         "Text": 30,
         "Overlay": 40,
+        "CaptionOverlay": 40,
         "Wrap": 50,
     }
     return layer_zorders.get(layer_name, 30)

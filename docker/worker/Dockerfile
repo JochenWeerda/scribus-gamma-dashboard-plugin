@@ -26,11 +26,13 @@ WORKDIR /app
 # Install Python dependencies
 COPY packages/common/requirements.txt /tmp/common-requirements.txt
 COPY packages/artifact_store/requirements.txt /tmp/store-requirements.txt
+COPY packages/layout_schema/requirements.txt /tmp/schema-requirements.txt
 COPY packages/sla_compiler/requirements.txt /tmp/compiler-requirements.txt
 COPY apps/worker-scribus/requirements.txt /tmp/worker-requirements.txt
 
 RUN pip3 install --no-cache-dir -r /tmp/common-requirements.txt && \
     pip3 install --no-cache-dir -r /tmp/store-requirements.txt && \
+    pip3 install --no-cache-dir -r /tmp/schema-requirements.txt && \
     pip3 install --no-cache-dir -r /tmp/compiler-requirements.txt && \
     pip3 install --no-cache-dir -r /tmp/worker-requirements.txt
 

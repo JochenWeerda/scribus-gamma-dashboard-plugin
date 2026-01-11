@@ -1,0 +1,43 @@
+{
+  "source": "C:\\\\path\\\\to\\\\sample.pptx",
+  "name": "sample",
+  "slides": [
+    {
+      "slide": 1,
+      "infoboxes": [
+        {
+          "text": "Infobox content",
+          "rel_bbox": [0.1, 0.6, 0.9, 0.8],
+          "role": "infobox",
+          "ignore": true
+        }
+      ],
+      "text_boxes": [
+        {
+          "text": "Hello Title",
+          "rel_bbox": [0.1, 0.1, 0.9, 0.2],
+          "role": "title",
+          "ignore": false
+        },
+        {
+          "text": "Sidebar text",
+          "rel_bbox": [0.7, 0.4, 0.95, 0.58],
+          "role": "sidebar",
+          "ignore": false
+        },
+        {
+          "text": "Ignored quote",
+          "rel_bbox": [0.1, 0.25, 0.9, 0.35],
+          "role": "quote",
+          "ignore": true
+        }
+      ],
+      "image_boxes": [
+        {
+          "rel_bbox": [0.0, 0.0, 0.3, 1.0],
+          "image": "images\\\\sample_s001.png"
+        }
+      ]
+    }
+  ]
+}

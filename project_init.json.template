@@ -39,6 +39,16 @@
     "enabled": false,
     "safety_margin_mm": 0.0
   },
+  "quality": {
+    "checks_default": ["preflight", "amazon", "heuristics"],
+    "heuristics": {
+      "avg_char_width_em": 0.6,
+      "line_height_em": 1.2,
+      "overflow_warn_ratio": 1.0,
+      "overflow_info_ratio": 0.9,
+      "objects_per_page_warn": 80
+    }
+  },
   "layout": {
     "grid": {"cols": 6},
     "layers": ["BACKGROUND", "IMAGES", "TEXT", "INFOBOX", "QUOTES", "OVERLAY"]
@@ -68,4 +78,3 @@
     "infographic_handling": "standard"
   }
 }
-

@@ -264,7 +264,14 @@ class StepExecutor:
         - amazon: KDP constraint validation
         """
 
-        from packages.quality_check import check_amazon_constraints, run_preflight, evaluate_quality_gate, summarize_quality_gate
+        from packages.quality_check import (
+            check_amazon_constraints,
+            evaluate_quality_gate,
+            run_heuristic_checks,
+            run_preflight,
+            summarize_quality_gate,
+            HeuristicConfig,
+        )
 
         checks = checks or ["preflight", "amazon"]
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -300,6 +307,18 @@ class StepExecutor:
                 # Quality gate (fail/warn policy), always computed.
                 gate_results = evaluate_quality_gate(layout, project_init=init)
                 entry["quality_gate"] = summarize_quality_gate(gate_results)
+
+                # Heuristic checks (warn-only), opt-in via checks list.
+                if "heuristics" in checks:
+                    hcfg_raw = ((init.get("quality") or {}).get("heuristics") or {})
+                    hcfg = HeuristicConfig(
+                        avg_char_width_em=float(hcfg_raw.get("avg_char_width_em", 0.6)),
+                        line_height_em=float(hcfg_raw.get("line_height_em", 1.2)),
+                        overflow_warn_ratio=float(hcfg_raw.get("overflow_warn_ratio", 1.0)),
+                        overflow_info_ratio=float(hcfg_raw.get("overflow_info_ratio", 0.9)),
+                        objects_per_page_warn=int(hcfg_raw.get("objects_per_page_warn", 80)),
+                    )
+                    entry["heuristics"] = run_heuristic_checks(layout, config=hcfg)
             except Exception as exc:
                 report["errors"].append({"path": str(p), "error": str(exc)})
                 continue

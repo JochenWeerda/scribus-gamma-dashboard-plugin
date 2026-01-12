@@ -82,6 +82,7 @@ screenshots/
 scribus/
 
 # Local archive (kept out of GitHub)
+archive/
 docs/archive/
 
 # Large binary assets (keep out of GitHub by default)

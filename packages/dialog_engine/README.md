@@ -42,3 +42,10 @@ from packages.dialog_engine.agents import AgentExecutor
 agent = AgentExecutor()
 result = agent.prompt_agent("LayoutDesigner", {"headline": "Titel", "images": 1, "body_chars": 1200})
 ```
+
+## LLM Provider (OpenAI)
+Set environment variables to enable OpenAI:
+- OPENAI_API_KEY
+- OPENAI_MODEL (default: gpt-4o-mini)
+- OPENAI_BASE_URL (optional)
+- OPENAI_TIMEOUT (optional, seconds)

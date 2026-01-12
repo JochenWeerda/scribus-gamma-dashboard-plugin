@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, ValidationError
 
-from .llm_integration import LLMClient, LLMRequest, DisabledLLM
+from .llm_integration import LLMClient, LLMRequest, build_llm_from_env
 
 
 class AgentPrompt(BaseModel):
@@ -130,7 +130,7 @@ class AgentExecutor:
     """
 
     def __init__(self, llm: Optional[LLMClient] = None):
-        self.llm = llm or DisabledLLM()
+        self.llm = llm or build_llm_from_env()
 
     def build_prompt(self, agent_id: str, input_data: Dict[str, Any]) -> LLMRequest:
         cfg = AGENT_REGISTRY[agent_id]

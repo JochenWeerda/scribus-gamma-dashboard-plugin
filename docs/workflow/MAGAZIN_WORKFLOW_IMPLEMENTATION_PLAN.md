@@ -74,11 +74,11 @@ Typischer Ablauf:
    - bundelt Outputs und lädt ein ZIP als `ArtifactType.WORKFLOW_REPORT` hoch
 
 ## Fehlende Komponenten / Offene Punkte
-- **Scribus Export (real)**: Worker nutzt noch Dummy-PDF/PNG. Echte Scribus-CLI/Python-Exports fehlen.
-- **LLM Provider Integration**: `dialog_engine` nutzt `DisabledLLM`; echte Provider-Config/Secrets fehlen.
-- **RAG Betrieb**: ChromaDB/Embedding-Abhaengigkeiten sind nicht Teil des Deployments, Indexing ist optional.
-- **Figma Full Sync**: AI-Brief vorhanden, aber End-to-End-Import/Export-Pipeline ist noch nicht production-hart.
-- **Policy/DoD**: Quality-Gate Kriterien brauchen eine finalisierte, testbare Checkliste.
+- **Scribus Export (real)**: Windows-Export via Scribus CLI/Python ist verfuegbar (Env-gesteuert). Linux/Container fehlt noch.
+- **LLM Provider Integration**: OpenAI ist integriert (Env `OPENAI_API_KEY`/`OPENAI_MODEL`). Weitere Provider optional.
+- **RAG Betrieb**: Docker-Service + Volume vorhanden; produktiver Betrieb/Monitoring noch offen.
+- **Figma Full Sync**: Import-Tool (`tools/figma_import_frames.py`) vorhanden. Export nach Figma bleibt Plugin-only/TODO.
+- **Policy/DoD**: Checkliste in `docs/workflow/QUALITY_GATE_CHECKLIST.md`, Tests/Thresholds weiter ausbauen.
 
 ## „Nur wenn Flag gesetzt ist“
 Die „teuren“ oder potenziell invasive Schritte sind strikt Flag-gesteuert:

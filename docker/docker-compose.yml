@@ -65,6 +65,8 @@ services:
       MINIO_SECRET_KEY: minioadmin
       MINIO_BUCKET: sla-artifacts
       SIDECAR_MCP_URL: http://sidecar-mcp:8001
+      ENABLE_RAG: "1"
+      CHROMA_DB_PATH: /data/chroma_db
     ports:
       - "8003:8000"
     depends_on:
@@ -76,6 +78,7 @@ services:
         condition: service_healthy
     volumes:
       - ../apps/api-gateway:/app
+      - rag_chroma:/data/chroma_db
       - ../packages:/packages
 
   # Sidecar-MCP Service
@@ -97,6 +100,18 @@ services:
     volumes:
       - ../apps/sidecar-mcp:/app
       - ../packages:/packages
+
+  # RAG Service (ChromaDB + embeddings)
+  rag-service:
+    build:
+      context: ..
+      dockerfile: packages/rag_service/Dockerfile
+    container_name: sla-pipeline-rag
+    environment:
+      CHROMA_DB_PATH: /data/chroma_db
+    volumes:
+      - ../packages/rag_service:/app
+      - rag_chroma:/data/chroma_db
 
   # Worker-Scribus (Headless)
   worker-scribus:
@@ -128,4 +143,5 @@ volumes:
   postgres_data:
   minio_data:
   worker_cache:
+  rag_chroma:
 

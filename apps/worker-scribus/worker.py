@@ -452,6 +452,11 @@ def process_workflow_job(job_id: str):
                 render_out=render_out,
                 render_pdf=bool(job_metadata.get("render_pdf", True)),
                 render_png=bool(job_metadata.get("render_png", True)),
+                agents_enabled=bool(job_metadata.get("agents_enabled", False)),
+                agent_steps=tuple(job_metadata.get("agent_steps") or ("SemanticEnricher", "LayoutDesigner", "QualityCritic")),
+                agent_seed=job_metadata.get("agent_seed"),
+                agent_version=str(job_metadata.get("agent_version") or "v1"),
+                agent_simulate=bool(job_metadata.get("agent_simulate", False)),
                 force=bool(job_metadata.get("force", False)),
                 retry_max=1,
             )

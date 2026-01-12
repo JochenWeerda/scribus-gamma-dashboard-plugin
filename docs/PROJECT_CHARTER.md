@@ -41,7 +41,7 @@ Aus **14 PPTX-Dateien** (+ optional Gamma-Exports) entstehen automatisiert:
 - Artefakte: `GET /v1/artifacts/{artifact_id}`
 - RQ Queues: `compile`, `export`, `workflow`
 - Bundle-Builder: `tools/build_workflow_bundle.py` / `tools/build_workflow_bundle.ps1`
-- Flags: `gamma_sync`, `gamma_crop_kinds`, `gamma_attach_to_variants`
+- Flags: `gamma_sync`, `gamma_crop_kinds`, `gamma_attach_to_variants`, `agents_enabled`, `agent_steps`, `agent_seed`, `agent_version`, `agent_simulate`
 - Canonical Docs: `docs/workflow/*` + Cookbook: `gamma_scribus_pack/plugin/cpp/SCRIBUS_PLUGIN_COOKBOOK.md`
 
 ## 7) Hauptrisiken & Gegenmaßnahmen

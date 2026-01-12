@@ -41,12 +41,20 @@ Empfohlene Defaults:
 - `gamma_crop_kinds=["infobox"]` (konservativ; Erweiterung nur bei Bedarf)
 - `gamma_attach_to_variants=false` (nur sinnvoll, wenn Variants genutzt werden)
 - `render=false` (Render ist teuer; bewusst opt-in)
+- `agents_enabled=false` (Agenten sind teuer/heuristisch; bewusst opt-in)
 
 Render-Flags:
 - `render=true|false`
 - `render_on_variants=true|false`
 - `render_pdf=true|false`
 - `render_png=true|false`
+
+Agent-Flags:
+- `agents_enabled=true|false`
+- `agent_steps=["SemanticEnricher","LayoutDesigner","QualityCritic"]`
+- `agent_seed=123` (optional; fuer Reproduzierbarkeit)
+- `agent_version="v1"` (optional; Cache-Versionierung)
+- `agent_simulate=true|false` (offline Modus)
 
 ## Steps (Pipeline)
 Der Orchestrator führt Schritte sequentiell aus und schreibt einen Resume-State (`workflow_state.json`).
@@ -58,12 +66,15 @@ Typischer Ablauf:
    - nur aktiv, wenn `gamma_sync=true`
 3. **variants** *(optional/teilweise)*:
    - erzeugt Varianten-JSON; optional werden `imageUrl`/`gammaCropArtifactId` gesetzt, wenn `gamma_attach_to_variants=true`
-4. **quality_check** *(optional/teilweise)*:
+4. **agents** *(optional/teilweise)*:
+   - heuristische Agenten liefern strukturierte Reports (Default: `agents_report.json`)
+5. **quality_check** *(optional/teilweise)*:
    - erzeugt Quality-JSON (z.B. Amazon-Checks), wenn aktiviert
-5. **report**:
+6. **report**:
    - bundelt Outputs und lädt ein ZIP als `ArtifactType.WORKFLOW_REPORT` hoch
 
 ## „Nur wenn Flag gesetzt ist“
 Die „teuren“ oder potenziell invasive Schritte sind strikt Flag-gesteuert:
 - Gamma-Crops: nur bei `gamma_sync=true`
 - Attach zu Varianten: nur bei `gamma_attach_to_variants=true` (und nur wenn `gamma_sync=true`)
+- Agenten: nur bei `agents_enabled=true` (optional `agent_simulate=true`)

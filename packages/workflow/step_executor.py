@@ -17,6 +17,65 @@ from .resume_manager import ResumeManager, hash_inputs
 class StepExecutor:
     tracker: ProgressTracker = field(default_factory=ProgressTracker)
 
+    def run_agents(
+        self,
+        *,
+        layout_paths: List[Path],
+        project_init: Optional[Path] = None,
+        agent_ids: Optional[List[str]] = None,
+        seed: Optional[int] = None,
+        version: str = "v1",
+        simulate: bool = False,
+        report_name: str = "agents_report.json",
+    ) -> Dict[str, Any]:
+        """
+        Run heuristic agents as black boxes and capture structured outputs.
+        This step is optional and should be deterministic via seed/version.
+        """
+
+        from packages.dialog_engine.agents import AgentExecutor
+
+        init: Dict[str, Any] = {}
+        if project_init and Path(project_init).exists():
+            try:
+                init = json.loads(Path(project_init).read_text(encoding="utf-8"))
+            except Exception:
+                init = {}
+
+        out_dir = Path("temp_analysis")
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        report: Dict[str, Any] = {"outputs": [], "errors": [], "agent_ids": agent_ids or [], "version": version, "seed": seed, "simulate": simulate}
+        self.tracker.emit("agents.start", inputs=len(layout_paths), agents=agent_ids or [])
+
+        executor = AgentExecutor()
+        for lp in layout_paths:
+            try:
+                layout = json.loads(Path(lp).read_text(encoding="utf-8"))
+            except Exception as exc:
+                report["errors"].append({"path": str(lp), "error": f"failed to read json: {exc}"})
+                continue
+
+            meta = _summarize_layout_for_agents(layout)
+            entry: Dict[str, Any] = {"path": str(lp), "summary": meta, "agents": {}}
+
+            for agent_id in agent_ids or []:
+                try:
+                    if simulate:
+                        entry["agents"][agent_id] = _simulate_agent(agent_id, meta, seed=seed, version=version)
+                    else:
+                        entry["agents"][agent_id] = executor.prompt_agent(agent_id, meta)
+                except Exception as exc:
+                    report["errors"].append({"path": str(lp), "agent": agent_id, "error": str(exc)})
+
+            report["outputs"].append(entry)
+
+        report_path = out_dir / report_name
+        report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        report["report_path"] = str(report_path)
+        self.tracker.emit("agents.done", outputs=len(report["outputs"]), errors=len(report["errors"]), report=str(report_path))
+        return report
+
     def render(
         self,
         *,
@@ -633,3 +692,75 @@ def _minimal_pdf_bytes(message: str) -> bytes:
     parts.append(f"{xref_start}\n".encode("ascii"))
     parts.append(b"%%EOF\n")
     return b"".join(parts)
+
+
+def _summarize_layout_for_agents(layout_json: Dict[str, Any]) -> Dict[str, Any]:
+    headline = ""
+    body_chars = 0
+    images = 0
+    infoboxes = 0
+    quotes = 0
+
+    for page in layout_json.get("pages", []) or []:
+        for obj in page.get("objects", []) or []:
+            otype = str(obj.get("type") or "")
+            if otype == "image":
+                images += 1
+            if otype == "text":
+                txt = str(obj.get("content") or "")
+                body_chars += len(txt)
+                if not headline and (obj.get("role") == "title" or obj.get("semantic") == "headline"):
+                    headline = txt[:80]
+            if str(obj.get("semantic") or "") == "infobox":
+                infoboxes += 1
+            if str(obj.get("semantic") or "") == "quote":
+                quotes += 1
+
+    return {
+        "headline": headline,
+        "body_chars": body_chars,
+        "images": images,
+        "infoboxes": infoboxes,
+        "quotes": quotes,
+    }
+
+
+def _simulate_agent(agent_id: str, meta: Dict[str, Any], *, seed: Optional[int], version: str) -> Dict[str, Any]:
+    # Deterministic placeholders for offline runs.
+    images = int(meta.get("images") or 0)
+    body_chars = int(meta.get("body_chars") or 0)
+
+    if agent_id == "SemanticEnricher":
+        title = meta.get("headline") or "Titel"
+        summary = (meta.get("headline") or "") + " ..."
+        keywords = [w for w in str(title).split()[:5]]
+        return {"title": title, "summary": summary.strip(), "keywords": keywords, "version": version, "seed": seed, "simulated": True}
+
+    if agent_id == "LayoutDesigner":
+        if images >= 1 and body_chars < 3000:
+            template_id = "hero_full"
+            visual_weight = 0.75
+            intent = "image-led"
+        elif body_chars > 4500:
+            template_id = "text_heavy"
+            visual_weight = 0.25
+            intent = "text-led"
+        else:
+            template_id = "two_column"
+            visual_weight = 0.55
+            intent = "balanced"
+        return {
+            "template_id": template_id,
+            "spacing_logic": "Whitespace first, stable hierarchy.",
+            "visual_weight": visual_weight,
+            "layout_intent": intent,
+            "notes": ["simulated"],
+            "version": version,
+            "seed": seed,
+            "simulated": True,
+        }
+
+    if agent_id == "QualityCritic":
+        return {"score": 7, "issues": [], "approved": True, "version": version, "seed": seed, "simulated": True}
+
+    return {"status": "simulated", "agent": agent_id, "version": version, "seed": seed}

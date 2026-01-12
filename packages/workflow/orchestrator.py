@@ -34,6 +34,11 @@ class WorkflowConfig:
     render_out: Path = Path("media_pool/render")
     render_pdf: bool = True
     render_png: bool = True
+    agents_enabled: bool = False
+    agent_steps: Tuple[str, ...] = ("SemanticEnricher", "LayoutDesigner", "QualityCritic")
+    agent_seed: Optional[int] = None
+    agent_version: str = "v1"
+    agent_simulate: bool = False
     force: bool = False
     retry_max: int = 1
 
@@ -228,6 +233,53 @@ class WorkflowOrchestrator:
                 state["variants"] = vres
 
             self._run_step(state=state, step_id="generate_variants", input_hash=variants_input_hash, fn=_do_variants, on_success=_variants_success)
+            self.resume.save(state)
+
+        if self.config.agents_enabled:
+            # Step 3.5: agents (heuristic black boxes)
+            res = convert_result_holder.get("res")
+            if res is None:
+                prev = self.resume.get_step(state, "convert_manifest")
+                outputs = prev.get("outputs") or state.get("converted", {}).get("outputs") or []
+                layout_paths = [Path(p) for p in outputs]
+            else:
+                layout_paths = list(res.outputs)
+
+            layout_hashes = []
+            for p in layout_paths:
+                try:
+                    layout_hashes.append({"path": str(p), "hash": hash_file(Path(p))})
+                except Exception:
+                    layout_hashes.append({"path": str(p), "hash": None})
+
+            agents_input_hash = hash_inputs(
+                {
+                    "step": "agents",
+                    "layouts": layout_hashes,
+                    "agent_steps": list(self.config.agent_steps),
+                    "agent_seed": self.config.agent_seed,
+                    "agent_version": self.config.agent_version,
+                    "simulate": bool(self.config.agent_simulate),
+                    "project_init_hash": project_init_hash,
+                }
+            )
+
+            def _do_agents():
+                return self.exec.run_agents(
+                    layout_paths=layout_paths,
+                    project_init=self.config.project_init,
+                    agent_ids=list(self.config.agent_steps),
+                    seed=self.config.agent_seed,
+                    version=self.config.agent_version,
+                    simulate=self.config.agent_simulate,
+                )
+
+            def _agents_success(ares):
+                _agents_success.outputs = [o.get("path") for o in (ares.get("outputs") or []) if o.get("path")]  # type: ignore[attr-defined]
+                _agents_success.summary = {"outputs": len(ares.get("outputs") or []), "errors": len(ares.get("errors") or [])}  # type: ignore[attr-defined]
+                state["agents"] = ares
+
+            self._run_step(state=state, step_id="agents", input_hash=agents_input_hash, fn=_do_agents, on_success=_agents_success)
             self.resume.save(state)
 
         if self.config.quality_check:

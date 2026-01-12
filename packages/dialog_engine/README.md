@@ -29,3 +29,16 @@ python -m packages.dialog_engine export-project-init `
   --template .cursor\project_init.json.template `
   --out temp_analysis\project_init.from_dialog.json
 ```
+
+## Agenten (heuristisch, strukturiert)
+
+Die Agenten liefern streng strukturierten Output (JSON), sodass der heuristische Teil
+deterministisch in den Workflow zurückgeführt werden kann.
+
+Beispiel:
+```python
+from packages.dialog_engine.agents import AgentExecutor
+
+agent = AgentExecutor()
+result = agent.prompt_agent("LayoutDesigner", {"headline": "Titel", "images": 1, "body_chars": 1200})
+```

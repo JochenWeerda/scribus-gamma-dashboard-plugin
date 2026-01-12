@@ -67,6 +67,7 @@ ENV/
 data/
 cache/
 .local_artifacts/
+chroma_db/
 
 # Environment (never commit secrets)
 .env

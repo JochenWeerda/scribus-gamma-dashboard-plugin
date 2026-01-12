@@ -73,6 +73,13 @@ Typischer Ablauf:
 6. **report**:
    - bundelt Outputs und lädt ein ZIP als `ArtifactType.WORKFLOW_REPORT` hoch
 
+## Fehlende Komponenten / Offene Punkte
+- **Scribus Export (real)**: Worker nutzt noch Dummy-PDF/PNG. Echte Scribus-CLI/Python-Exports fehlen.
+- **LLM Provider Integration**: `dialog_engine` nutzt `DisabledLLM`; echte Provider-Config/Secrets fehlen.
+- **RAG Betrieb**: ChromaDB/Embedding-Abhaengigkeiten sind nicht Teil des Deployments, Indexing ist optional.
+- **Figma Full Sync**: AI-Brief vorhanden, aber End-to-End-Import/Export-Pipeline ist noch nicht production-hart.
+- **Policy/DoD**: Quality-Gate Kriterien brauchen eine finalisierte, testbare Checkliste.
+
 ## „Nur wenn Flag gesetzt ist“
 Die „teuren“ oder potenziell invasive Schritte sind strikt Flag-gesteuert:
 - Gamma-Crops: nur bei `gamma_sync=true`

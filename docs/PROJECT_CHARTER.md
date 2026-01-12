@@ -49,6 +49,7 @@ Aus **14 PPTX-Dateien** (+ optional Gamma-Exports) entstehen automatisiert:
 - **Qualitätskriterien unklar:** DoD/Policy schriftlich fixieren, automatisieren, regressionsfähig machen.
 - **PPTX Semantik uneindeutig:** Sidecar Overrides + heuristische Cluster-Detektion + schrittweise Ausbau.
 - **Assets/Fonts/ICC in Produktion:** „Assets als Paket“ definieren (Versionierung), Preflight/Validator erzwingen.
+- **LLM/RAG Betrieb:** Provider/Modelle stabil konfigurieren; Indexing/ChromaDB braucht eigene Deploy-Optionen.
 
 ## 8) Milestone-Plan (4 Blöcke)
 
@@ -77,3 +78,4 @@ Aus **14 PPTX-Dateien** (+ optional Gamma-Exports) entstehen automatisiert:
 2. SLA→PDF/Preview Step als expliziten Workflow-Step festziehen (Parameter/Artefakte/Reports).
 3. `project_init.json` als kanonische „Machine-Config“ finalisieren (aus Design-Decisions ableiten).
 4. Figma AI Modus 1 integrieren: `/api/figma/ai/brief` → Prompt-Pack, danach `frames/import`.
+5. Fehlende Komponenten schließen (realer Scribus-Export, LLM-Provider, RAG Deploy/Indexing).
